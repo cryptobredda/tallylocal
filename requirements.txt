@@ -1,0 +1,24 @@
+# Web Framework
+flask==3.0.0
+flask-cors==4.0.0
+
+# Database
+sqlalchemy==2.0.23
+alembic==1.13.0
+
+# OCR - PaddleOCR (see PADDLEOCR_INSTALL.md for setup instructions)
+paddlepaddle
+paddleocr
+
+# PDF processing
+pypdf2==3.0.1
+pdf2image==1.16.3
+pillow==10.1.0
+
+# Data processing
+pandas==2.1.4
+python-dateutil==2.8.2
+
+# Utilities
+python-dotenv==1.0.0
+werkzeug==3.0.1

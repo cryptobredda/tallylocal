@@ -1,0 +1,1447 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tally Local</title>
+    <link rel="icon" type="image/png" href="/tallylocal-icon.png">
+    <link rel="apple-touch-icon" href="/tallylocal-icon.png">
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'surface': { 50: '#12121a', 100: '#16161f', 200: '#1a1a24', 300: '#22222e', 400: '#2a2a38' },
+                        'accent': { yellow: '#facc15', cyan: '#06b6d4', green: '#22c55e', red: '#ef4444', purple: '#a855f7', blue: '#3b82f6', orange: '#f97316' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        * { font-family: 'Inter', -apple-system, sans-serif; }
+        .mono { font-family: 'SF Mono', 'Consolas', monospace; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        /* Clean card style with subtle neo-brutalist touch */
+        .card-nb { 
+            background: #16161f; 
+            border: 1px solid #2a2a38; 
+            border-radius: 12px;
+            transition: all 0.15s ease;
+        }
+        .card-nb:hover { border-color: #3a3a48; }
+        .card-nb-accent {
+            background: #16161f;
+            border: 2px solid;
+            border-radius: 12px;
+            box-shadow: 3px 3px 0 0;
+        }
+        
+        /* Buttons */
+        .btn-nb {
+            font-weight: 600;
+            border: 1px solid transparent;
+            border-radius: 8px;
+            transition: all 0.1s ease;
+        }
+        .btn-nb-primary { background: #facc15; color: #000; }
+        .btn-nb-primary:hover { background: #eab308; }
+        .btn-nb-secondary { background: #22222e; color: #fff; border-color: #2a2a38; }
+        .btn-nb-secondary:hover { background: #2a2a38; }
+        
+        /* Inputs */
+        .input-nb {
+            background: #12121a;
+            border: 1px solid #2a2a38;
+            border-radius: 8px;
+            color: #fff;
+            transition: all 0.15s ease;
+        }
+        .input-nb:focus { border-color: #facc15; outline: none; box-shadow: 0 0 0 2px rgba(250,204,21,0.15); }
+        
+        /* Sidebar */
+        .sidebar { background: #12121a; border-right: 1px solid #22222e; }
+        .nav-item { 
+            padding: 10px 14px; 
+            border-radius: 8px; 
+            color: #888;
+            font-size: 14px;
+            transition: all 0.15s ease;
+        }
+        .nav-item:hover { background: #1a1a24; color: #fff; }
+        .nav-item.active { background: #facc15; color: #000; font-weight: 600; }
+        .nav-item i { width: 20px; }
+        
+        /* Table */
+        .table-nb { border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+        .table-nb th { 
+            background: #12121a; 
+            font-size: 11px; 
+            font-weight: 600; 
+            text-transform: uppercase; 
+            letter-spacing: 0.5px;
+            color: #666;
+            padding: 12px 16px;
+            border-bottom: 1px solid #22222e;
+            white-space: nowrap;
+        }
+        .table-nb td { padding: 12px 16px; border-bottom: 1px solid #1a1a24; font-size: 14px; }
+        .table-nb tr:hover td { background: #1a1a24; }
+        .table-nb td.max-w-0 { overflow: hidden; }
+        
+        /* Stat card colors */
+        .stat-cyan { border-color: #06b6d4; box-shadow: 2px 2px 0 #06b6d4; }
+        .stat-green { border-color: #22c55e; box-shadow: 2px 2px 0 #22c55e; }
+        .stat-red { border-color: #ef4444; box-shadow: 2px 2px 0 #ef4444; }
+        .stat-yellow { border-color: #facc15; box-shadow: 2px 2px 0 #facc15; }
+        .stat-purple { border-color: #a855f7; box-shadow: 2px 2px 0 #a855f7; }
+        
+        /* Badge */
+        .badge-nb { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 4px; }
+        
+        /* Period selector buttons */
+        .period-btn, .analytics-period-btn { color: #888; transition: all 0.15s; }
+        .period-btn:hover, .analytics-period-btn:hover { color: #fff; background: #22222e; }
+        .period-active, .analytics-period-active { color: #facc15 !important; background: #22222e !important; }
+        
+        /* Asset subtabs */
+        .asset-subtab { color: #888; transition: all 0.15s; border-bottom: 2px solid transparent; }
+        .asset-subtab:hover { color: #fff; }
+        .asset-subtab-active { color: #facc15 !important; border-bottom-color: #facc15 !important; }
+        
+        /* Portfolio range buttons */
+        .portfolio-range-btn { color: #888; transition: all 0.15s; }
+        .portfolio-range-btn:hover { color: #fff; background: #22222e; }
+        .portfolio-range-active { color: #facc15 !important; background: #22222e !important; }
+        
+        /* Modal */
+        .modal-nb { background: #16161f; border: 1px solid #2a2a38; border-radius: 16px; }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #2a2a38; border-radius: 3px; }
+        
+        /* Mobile bottom nav */
+        .bottom-nav { display: none; }
+        @media (max-width: 1023px) {
+            .bottom-nav { display: flex; }
+            .sidebar { display: none; }
+        }
+    </style>
+</head>
+<body class="bg-surface-50 text-white min-h-screen">
+    <!-- Mobile Header -->
+    <header class="lg:hidden sticky top-0 z-40 bg-surface-50/95 backdrop-blur border-b border-surface-300 px-4 py-3">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <img src="/tallylocal-icon.png" alt="Tally Local" class="w-8 h-8 rounded-lg">
+                <span class="font-bold">Tally Local</span>
+            </div>
+            <button onclick="showTab('upload')" class="btn-nb btn-nb-primary px-3 py-1.5 text-sm">
+                <i class="fas fa-plus mr-1"></i>Import
+            </button>
+        </div>
+    </header>
+
+    <div class="flex">
+        <!-- Sidebar (Desktop) -->
+        <aside class="sidebar hidden lg:flex flex-col w-56 min-h-screen sticky top-0 p-4">
+            <div class="flex items-center gap-2 px-2 mb-8">
+                <img src="/tallylocal-icon.png" alt="Tally Local" class="w-9 h-9 rounded-lg">
+                <div>
+                    <div class="font-bold text-sm">Tally Local</div>
+                    <div class="text-[10px] text-gray-500">Personal Tracker</div>
+                </div>
+            </div>
+
+            <nav class="flex-1 space-y-1">
+                <a onclick="showTab('dashboard')" class="nav-item active flex items-center gap-3 cursor-pointer" data-tab="dashboard">
+                    <i class="fas fa-th-large"></i>Dashboard
+                </a>
+                <a onclick="showTab('transactions')" class="nav-item flex items-center gap-3 cursor-pointer" data-tab="transactions">
+                    <i class="fas fa-receipt"></i>Transactions
+                </a>
+                <a onclick="showTab('pots')" class="nav-item flex items-center gap-3 cursor-pointer" data-tab="pots">
+                    <i class="fas fa-wallet"></i>Accounts
+                </a>
+                <a onclick="showTab('analytics')" class="nav-item flex items-center gap-3 cursor-pointer" data-tab="analytics">
+                    <i class="fas fa-chart-bar"></i>Analytics
+                </a>
+                <a onclick="showTab('budgets')" class="nav-item flex items-center gap-3 cursor-pointer" data-tab="budgets">
+                    <i class="fas fa-bullseye"></i>Budgets
+                </a>
+                <a onclick="showTab('assets')" class="nav-item flex items-center gap-3 cursor-pointer" data-tab="assets">
+                    <i class="fas fa-coins"></i>Assets
+                </a>
+                <a onclick="showTab('upload')" class="nav-item flex items-center gap-3 cursor-pointer" data-tab="upload">
+                    <i class="fas fa-upload"></i>Import
+                </a>
+                <a onclick="showTab('settings')" class="nav-item flex items-center gap-3 cursor-pointer" data-tab="settings">
+                    <i class="fas fa-cog"></i>Settings
+                </a>
+            </nav>
+
+            <div id="ocr-status" class="text-xs text-gray-500 px-2 flex items-center gap-2">
+                <span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span>
+                <span>Checking OCR...</span>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 min-h-screen pb-20 lg:pb-0">
+            <!-- Dashboard -->
+            <div id="tab-dashboard" class="tab-content active p-4 lg:p-6 max-w-7xl mx-auto">
+                <!-- Header -->
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                    <div>
+                        <h1 class="text-xl lg:text-2xl font-bold">Dashboard</h1>
+                        <p id="period-label" class="text-sm text-gray-500">Financial Overview</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <!-- Period Selector -->
+                        <div class="flex items-center gap-2 bg-surface-200 rounded-lg p-1">
+                            <button onclick="setDashboardPeriod('mtd')" id="period-mtd" class="period-btn period-active px-3 py-1.5 text-xs rounded">MTD</button>
+                            <button onclick="setDashboardPeriod('month')" id="period-month" class="period-btn px-3 py-1.5 text-xs rounded">Month</button>
+                            <button onclick="setDashboardPeriod('ytd')" id="period-ytd" class="period-btn px-3 py-1.5 text-xs rounded">YTD</button>
+                            <button onclick="setDashboardPeriod('year')" id="period-year" class="period-btn px-3 py-1.5 text-xs rounded">Year</button>
+                            <button onclick="setDashboardPeriod('all')" id="period-all" class="period-btn px-3 py-1.5 text-xs rounded">All</button>
+                            <button onclick="showCustomPeriodModal()" id="period-custom" class="period-btn px-3 py-1.5 text-xs rounded"><i class="fas fa-calendar"></i></button>
+                        </div>
+                        <button onclick="showTab('upload')" class="hidden lg:flex btn-nb btn-nb-primary px-4 py-2 text-sm items-center gap-2">
+                            <i class="fas fa-plus"></i>Import
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Stats Grid -->
+                <div class="grid grid-cols-2 lg:grid-cols-5 gap-3 lg:gap-4 mb-6">
+                    <div class="card-nb-accent stat-cyan p-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-[10px] font-semibold text-cyan-400 uppercase tracking-wide">Balance</span>
+                            <i class="fas fa-landmark text-cyan-400 text-xs"></i>
+                        </div>
+                        <p id="stat-balance" class="text-lg lg:text-xl font-bold text-cyan-400 mono">£0</p>
+                    </div>
+                    <div class="card-nb-accent stat-green p-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-[10px] font-semibold text-green-400 uppercase tracking-wide">Income</span>
+                            <i class="fas fa-arrow-down text-green-400 text-xs"></i>
+                        </div>
+                        <p id="stat-income" class="text-lg lg:text-xl font-bold text-green-400 mono">£0</p>
+                    </div>
+                    <div class="card-nb-accent stat-red p-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-[10px] font-semibold text-red-400 uppercase tracking-wide">Spent</span>
+                            <i class="fas fa-arrow-up text-red-400 text-xs"></i>
+                        </div>
+                        <p id="stat-expenses" class="text-lg lg:text-xl font-bold text-red-400 mono">£0</p>
+                    </div>
+                    <div class="card-nb-accent stat-yellow p-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <span id="net-badge" class="text-[10px] font-semibold text-yellow-400 uppercase tracking-wide">Net</span>
+                            <i class="fas fa-chart-line text-yellow-400 text-xs"></i>
+                        </div>
+                        <p id="stat-net" class="text-lg lg:text-xl font-bold text-yellow-400 mono">£0</p>
+                    </div>
+                    <div class="card-nb-accent stat-purple p-4 col-span-2 lg:col-span-1">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-[10px] font-semibold text-purple-400 uppercase tracking-wide">Saved</span>
+                            <i class="fas fa-piggy-bank text-purple-400 text-xs"></i>
+                        </div>
+                        <p id="stat-pots" class="text-lg lg:text-xl font-bold text-purple-400 mono">£0</p>
+                    </div>
+                </div>
+
+                <!-- Quick Insights Row -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 lg:gap-4 mb-6">
+                    <div class="card-nb p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs font-semibold text-gray-400">Daily Average</span>
+                            <span class="badge-nb bg-surface-300 text-gray-300">30 days</span>
+                        </div>
+                        <p id="daily-avg" class="text-xl font-bold mono">£0</p>
+                        <p class="text-xs text-gray-500 mt-1">spending per day</p>
+                    </div>
+                    <div class="card-nb p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs font-semibold text-gray-400">Biggest Expense</span>
+                            <span class="badge-nb bg-red-500/20 text-red-400">This month</span>
+                        </div>
+                        <p id="biggest-expense" class="text-xl font-bold mono">£0</p>
+                        <p id="biggest-expense-cat" class="text-xs text-gray-500 mt-1 truncate">-</p>
+                    </div>
+                    <div class="card-nb p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs font-semibold text-gray-400">Transactions</span>
+                            <span class="badge-nb bg-cyan-500/20 text-cyan-400">Total</span>
+                        </div>
+                        <p id="tx-count" class="text-xl font-bold mono">0</p>
+                        <p class="text-xs text-gray-500 mt-1">all time</p>
+                    </div>
+                </div>
+
+                <!-- Charts Row -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+                    <div class="card-nb p-4 lg:col-span-2">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-sm font-semibold">Cash Flow</span>
+                            <div class="flex gap-1">
+                                <button onclick="setCashFlowPeriod(3)" class="btn-nb btn-nb-secondary px-2 py-1 text-xs" id="cf-3m">3M</button>
+                                <button onclick="setCashFlowPeriod(6)" class="btn-nb btn-nb-secondary px-2 py-1 text-xs cf-active" id="cf-6m">6M</button>
+                                <button onclick="setCashFlowPeriod(12)" class="btn-nb btn-nb-secondary px-2 py-1 text-xs" id="cf-12m">1Y</button>
+                            </div>
+                        </div>
+                        <div class="h-48 lg:h-56">
+                            <canvas id="cashflow-chart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card-nb p-4">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-sm font-semibold">By Category</span>
+                            <span id="category-total" class="text-xs text-gray-500 mono"></span>
+                        </div>
+                        <div class="h-48 lg:h-56">
+                            <canvas id="category-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bottom Row -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div class="card-nb p-4">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-sm font-semibold">Recent Transactions</span>
+                            <button onclick="showTab('transactions')" class="text-xs text-accent-yellow hover:underline">View all</button>
+                        </div>
+                        <div id="recent-transactions" class="space-y-2"></div>
+                    </div>
+                    <div class="card-nb p-4">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-sm font-semibold">Top Merchants</span>
+                            <span class="text-xs text-gray-500">This month</span>
+                        </div>
+                        <div id="merchants-list" class="space-y-3"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Transactions -->
+            <div id="tab-transactions" class="tab-content p-4 lg:p-6 max-w-7xl mx-auto">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                    <div>
+                        <h1 class="text-xl lg:text-2xl font-bold">Transactions</h1>
+                        <p class="text-sm text-gray-500">All financial activity</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="showAddTransactionModal()" class="btn-nb btn-nb-primary px-3 py-2 text-sm flex items-center gap-2">
+                            <i class="fas fa-plus text-xs"></i>Add Transaction
+                        </button>
+                        <div class="dropdown dropdown-end">
+                            <label tabindex="0" class="btn-nb btn-nb-secondary px-3 py-2 text-sm cursor-pointer flex items-center gap-2">
+                                <i class="fas fa-download text-xs"></i>Export
+                            </label>
+                            <ul tabindex="0" class="dropdown-content z-10 menu p-2 shadow-lg bg-surface-200 border border-surface-300 rounded-lg w-48 mt-2">
+                                <li><a onclick="exportCSV('filtered')" class="text-sm">Export Filtered (<span id="export-filtered-count">0</span>)</a></li>
+                                <li><a onclick="exportCSV('all')" class="text-sm">Export All</a></li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Filters -->
+                <div class="card-nb p-4 mb-4">
+                    <div class="flex flex-col gap-3">
+                        <div class="relative">
+                            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm"></i>
+                            <input type="text" id="search-input" placeholder="Search transactions..." class="input-nb w-full pl-9 pr-4 py-2 text-sm" onkeyup="handleSearch(event)">
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <select id="filter-category" class="input-nb px-3 py-2 text-sm flex-1 min-w-[120px]">
+                                <option value="">All Categories</option>
+                            </select>
+                            <select id="filter-type" class="input-nb px-3 py-2 text-sm w-28">
+                                <option value="">All Types</option>
+                                <option value="income">Income</option>
+                                <option value="expense">Expense</option>
+                            </select>
+                            <select id="filter-pot" class="input-nb px-3 py-2 text-sm w-32 hidden sm:block">
+                                <option value="">All Accounts</option>
+                            </select>
+                            <input type="date" id="filter-start" class="input-nb px-3 py-2 text-sm w-32">
+                            <input type="date" id="filter-end" class="input-nb px-3 py-2 text-sm w-32">
+                            <select id="filter-per-page" class="input-nb px-3 py-2 text-sm w-24" onchange="changePerPage()">
+                                <option value="15">15</option>
+                                <option value="25">25</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                                <option value="250">250</option>
+                            </select>
+                            <button onclick="loadTransactions()" class="btn-nb btn-nb-primary px-3 py-2 text-sm">Apply</button>
+                            <button onclick="clearFilters()" class="btn-nb btn-nb-secondary px-3 py-2 text-sm">Clear</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Filters -->
+                <div class="flex items-center justify-between mb-4">
+                    <div id="transactions-info" class="text-xs text-gray-500 mono"></div>
+                    <div class="flex gap-1">
+                        <button onclick="setQuickFilter('today')" class="btn-nb btn-nb-secondary px-2 py-1 text-xs">Today</button>
+                        <button onclick="setQuickFilter('week')" class="btn-nb btn-nb-secondary px-2 py-1 text-xs">Week</button>
+                        <button onclick="setQuickFilter('month')" class="btn-nb btn-nb-secondary px-2 py-1 text-xs">Month</button>
+                    </div>
+                </div>
+
+                <!-- Bulk Edit Bar -->
+                <div id="bulk-edit-bar" class="hidden card-nb p-3 mb-4 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <span id="selected-count" class="text-sm font-medium">0 selected</span>
+                        <button onclick="clearSelection()" class="text-xs text-gray-400 hover:text-white">Clear</button>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="showBulkEditModal()" class="btn-nb btn-nb-primary px-3 py-1.5 text-sm">
+                            <i class="fas fa-edit mr-1"></i>Edit Selected
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Table -->
+                <div class="card-nb overflow-hidden overflow-x-auto">
+                    <table class="table-nb w-full min-w-[600px]">
+                        <thead>
+                            <tr>
+                                <th style="width: 40px;">
+                                    <input type="checkbox" id="select-all" class="checkbox checkbox-sm" onchange="toggleSelectAll()">
+                                </th>
+                                <th class="cursor-pointer" style="width: 80px;" onclick="sortBy('date')">
+                                    Date <span id="sort-icon-date" class="text-accent-yellow ml-1"><i class="fas fa-sort-down"></i></span>
+                                </th>
+                                <th class="cursor-pointer" onclick="sortBy('description')">
+                                    Description <span id="sort-icon-description" class="text-gray-600 ml-1"><i class="fas fa-sort"></i></span>
+                                </th>
+                                <th class="cursor-pointer hidden sm:table-cell" style="width: 120px;" onclick="sortBy('category')">
+                                    Category <span id="sort-icon-category" class="text-gray-600 ml-1"><i class="fas fa-sort"></i></span>
+                                </th>
+                                <th class="text-right cursor-pointer" style="width: 100px;" onclick="sortBy('amount')">
+                                    Amount <span id="sort-icon-amount" class="text-gray-600 ml-1"><i class="fas fa-sort"></i></span>
+                                </th>
+                                <th style="width: 80px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="transactions-table"></tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="flex flex-col sm:flex-row justify-between items-center gap-3 mt-4">
+                    <div id="transactions-page-info" class="text-xs text-gray-500"></div>
+                    <div id="transactions-pagination" class="flex gap-1"></div>
+                </div>
+            </div>
+
+            <!-- Accounts -->
+            <div id="tab-pots" class="tab-content p-4 lg:p-6 max-w-7xl mx-auto">
+                <div class="flex items-center justify-between mb-6">
+                    <div>
+                        <h1 class="text-xl lg:text-2xl font-bold">Accounts</h1>
+                        <p class="text-sm text-gray-500">Manage your money</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="showTransferModal()" class="btn-nb btn-nb-secondary px-3 py-2 text-sm">
+                            <i class="fas fa-exchange-alt mr-2"></i>Transfer
+                        </button>
+                        <button onclick="showCreateAccountModal()" class="btn-nb btn-nb-primary px-3 py-2 text-sm">
+                            <i class="fas fa-plus mr-2"></i>New Account
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Main Account Card -->
+                <div id="main-account-card" class="card-nb-accent border-accent-yellow p-5 mb-6">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            <div class="w-12 h-12 rounded-xl bg-accent-yellow/20 flex items-center justify-center">
+                                <i class="fas fa-landmark text-accent-yellow text-xl"></i>
+                            </div>
+                            <div>
+                                <p class="text-xs text-gray-500 uppercase tracking-wide">Main Account</p>
+                                <p id="main-account-name" class="font-semibold">Loading...</p>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <p id="main-account-balance" class="text-2xl lg:text-3xl font-bold mono text-accent-yellow">£0</p>
+                            <p class="text-xs text-gray-500">
+                                <span class="text-green-400" id="main-account-in">+£0</span> / 
+                                <span class="text-red-400" id="main-account-out">-£0</span>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sub Accounts -->
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-sm font-semibold text-gray-400">Sub Accounts</h2>
+                    <span id="sub-accounts-total" class="text-xs text-gray-500 mono"></span>
+                </div>
+                <div id="accounts-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6"></div>
+
+                <!-- Recent Transfers -->
+                <div class="card-nb p-4">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-semibold">Recent Transfers</h3>
+                    </div>
+                    <div id="transfers-list" class="space-y-2"></div>
+                </div>
+            </div>
+
+            <!-- Analytics -->
+            <div id="tab-analytics" class="tab-content p-4 lg:p-6 max-w-7xl mx-auto">
+                <!-- Header with Period Selector -->
+                <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
+                    <div>
+                        <h1 class="text-xl lg:text-2xl font-bold">Analytics</h1>
+                        <p id="analytics-period-label" class="text-sm text-gray-500">Spending insights</p>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <div class="flex items-center gap-1 bg-surface-200 rounded-lg p-1">
+                            <button onclick="setAnalyticsPeriod('mtd')" id="analytics-mtd" class="analytics-period-btn analytics-period-active px-3 py-1.5 text-xs rounded">MTD</button>
+                            <button onclick="setAnalyticsPeriod('month')" id="analytics-month" class="analytics-period-btn px-3 py-1.5 text-xs rounded">Last Month</button>
+                            <button onclick="setAnalyticsPeriod('3month')" id="analytics-3month" class="analytics-period-btn px-3 py-1.5 text-xs rounded">3 Months</button>
+                            <button onclick="setAnalyticsPeriod('ytd')" id="analytics-ytd" class="analytics-period-btn px-3 py-1.5 text-xs rounded">YTD</button>
+                            <button onclick="setAnalyticsPeriod('year')" id="analytics-year" class="analytics-period-btn px-3 py-1.5 text-xs rounded">Last Year</button>
+                            <button onclick="setAnalyticsPeriod('all')" id="analytics-all" class="analytics-period-btn px-3 py-1.5 text-xs rounded">All</button>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <input type="date" id="analytics-start" class="input-nb px-2 py-1.5 text-xs w-32" onchange="applyAnalyticsCustomDate()">
+                            <span class="text-gray-500 text-xs">to</span>
+                            <input type="date" id="analytics-end" class="input-nb px-2 py-1.5 text-xs w-32" onchange="applyAnalyticsCustomDate()">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Key Metrics -->
+                <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+                    <div class="card-nb p-4">
+                        <p class="text-xs text-gray-500 mb-1">Total Income</p>
+                        <p id="analytics-income" class="text-xl font-bold mono text-green-400">£0</p>
+                    </div>
+                    <div class="card-nb p-4">
+                        <p class="text-xs text-gray-500 mb-1">Total Expenses</p>
+                        <p id="analytics-expenses" class="text-xl font-bold mono text-red-400">£0</p>
+                    </div>
+                    <div class="card-nb p-4">
+                        <p class="text-xs text-gray-500 mb-1">Net Savings</p>
+                        <p id="analytics-net" class="text-xl font-bold mono">£0</p>
+                    </div>
+                    <div class="card-nb p-4">
+                        <p class="text-xs text-gray-500 mb-1">Savings Rate</p>
+                        <p id="analytics-savings-rate" class="text-xl font-bold mono">0%</p>
+                    </div>
+                    <div class="card-nb p-4">
+                        <p class="text-xs text-gray-500 mb-1">Transactions</p>
+                        <p id="analytics-tx-count" class="text-xl font-bold mono">0</p>
+                    </div>
+                    <div class="card-nb p-4">
+                        <p class="text-xs text-gray-500 mb-1">Daily Average</p>
+                        <p id="analytics-daily-avg" class="text-xl font-bold mono">£0</p>
+                    </div>
+                </div>
+
+                <!-- Charts Row -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+                    <!-- Income vs Expenses Chart -->
+                    <div class="card-nb p-4">
+                        <h3 class="text-sm font-semibold mb-4">Income vs Expenses Trend</h3>
+                        <div class="h-64">
+                            <canvas id="analytics-trend-chart"></canvas>
+                        </div>
+                    </div>
+                    <!-- Category Pie Chart -->
+                    <div class="card-nb p-4">
+                        <h3 class="text-sm font-semibold mb-4">Spending by Category</h3>
+                        <div class="h-64">
+                            <canvas id="analytics-pie-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Category Breakdown & Top Merchants -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+                    <div class="card-nb p-4">
+                        <h3 class="text-sm font-semibold mb-4">Category Breakdown</h3>
+                        <div id="analytics-category-breakdown" class="space-y-3 max-h-80 overflow-y-auto"></div>
+                    </div>
+                    <div class="card-nb p-4">
+                        <h3 class="text-sm font-semibold mb-4">Top Merchants</h3>
+                        <div id="analytics-top-merchants" class="space-y-3 max-h-80 overflow-y-auto"></div>
+                    </div>
+                </div>
+
+                <!-- Monthly Comparison & Statistics -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+                    <!-- Monthly Comparison -->
+                    <div class="card-nb p-4 lg:col-span-2">
+                        <h3 class="text-sm font-semibold mb-4">Monthly Comparison</h3>
+                        <div class="h-64">
+                            <canvas id="analytics-monthly-chart"></canvas>
+                        </div>
+                    </div>
+                    <!-- Statistics -->
+                    <div class="card-nb p-4">
+                        <h3 class="text-sm font-semibold mb-4">Statistics</h3>
+                        <div class="space-y-3">
+                            <div class="flex justify-between items-center py-2 border-b border-surface-300">
+                                <span class="text-sm text-gray-400">Avg. Expense</span>
+                                <span id="analytics-avg-expense" class="text-sm mono font-medium">£0</span>
+                            </div>
+                            <div class="flex justify-between items-center py-2 border-b border-surface-300">
+                                <span class="text-sm text-gray-400">Largest Expense</span>
+                                <span id="analytics-max-expense" class="text-sm mono font-medium">£0</span>
+                            </div>
+                            <div class="flex justify-between items-center py-2 border-b border-surface-300">
+                                <span class="text-sm text-gray-400">Smallest Expense</span>
+                                <span id="analytics-min-expense" class="text-sm mono font-medium">£0</span>
+                            </div>
+                            <div class="flex justify-between items-center py-2 border-b border-surface-300">
+                                <span class="text-sm text-gray-400">Categories Used</span>
+                                <span id="analytics-cats-used" class="text-sm mono font-medium">0</span>
+                            </div>
+                            <div class="flex justify-between items-center py-2 border-b border-surface-300">
+                                <span class="text-sm text-gray-400">Avg. per Day</span>
+                                <span id="analytics-per-day" class="text-sm mono font-medium">£0</span>
+                            </div>
+                            <div class="flex justify-between items-center py-2">
+                                <span class="text-sm text-gray-400">Most Expensive Day</span>
+                                <span id="analytics-expensive-day" class="text-sm mono font-medium">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Day of Week Analysis & Recurring -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div class="card-nb p-4">
+                        <h3 class="text-sm font-semibold mb-4">Spending by Day of Week</h3>
+                        <div class="h-48">
+                            <canvas id="analytics-dow-chart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card-nb p-4">
+                        <h3 class="text-sm font-semibold mb-4">Recurring Payments</h3>
+                        <div id="analytics-recurring" class="space-y-2 max-h-48 overflow-y-auto"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Budgets Tab -->
+            <div id="tab-budgets" class="tab-content p-4 lg:p-6 max-w-7xl mx-auto">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                    <div>
+                        <h1 class="text-xl lg:text-2xl font-bold">Budgets</h1>
+                        <p class="text-sm text-gray-500">Track spending against your limits</p>
+                    </div>
+                    <button onclick="showCreateBudgetModal()" class="btn-nb btn-nb-primary px-4 py-2 text-sm flex items-center gap-2">
+                        <i class="fas fa-plus"></i>Create Budget
+                    </button>
+                </div>
+
+                <!-- Budget Summary -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div class="card-nb p-4">
+                        <p class="text-xs text-gray-500 mb-1">Total Budgeted</p>
+                        <p id="budget-total" class="text-2xl font-bold text-cyan-400 mono">£0</p>
+                    </div>
+                    <div class="card-nb p-4">
+                        <p class="text-xs text-gray-500 mb-1">Total Spent</p>
+                        <p id="budget-spent" class="text-2xl font-bold text-red-400 mono">£0</p>
+                    </div>
+                    <div class="card-nb p-4">
+                        <p class="text-xs text-gray-500 mb-1">Remaining</p>
+                        <p id="budget-remaining" class="text-2xl font-bold text-green-400 mono">£0</p>
+                    </div>
+                </div>
+
+                <!-- Budget Alerts -->
+                <div id="budget-alerts" class="mb-6"></div>
+
+                <!-- Budget List -->
+                <div class="card-nb">
+                    <div class="p-4 border-b border-surface-300">
+                        <h3 class="font-semibold">Category Budgets</h3>
+                    </div>
+                    <div id="budgets-list" class="p-4 space-y-4">
+                        <p class="text-gray-500 text-center py-8">No budgets set. Create one to start tracking!</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Upload -->
+            <div id="tab-upload" class="tab-content p-4 lg:p-6 max-w-7xl mx-auto">
+                <div class="mb-6">
+                    <h1 class="text-xl lg:text-2xl font-bold">Import</h1>
+                    <p class="text-sm text-gray-500">Upload bank statements</p>
+                </div>
+
+                <!-- Account Selector -->
+                <div class="card-nb p-4 mb-6">
+                    <label class="text-xs text-gray-500 mb-2 block">Import transactions to account</label>
+                    <select id="upload-account" class="input-nb w-full px-3 py-2 text-sm"></select>
+                </div>
+
+                <div id="drop-zone" class="card-nb p-8 lg:p-12 mb-6 cursor-pointer border-dashed border-2 border-surface-400 hover:border-accent-yellow transition-colors text-center" onclick="document.getElementById('file-input').click()">
+                    <input type="file" id="file-input" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tiff" multiple class="hidden" onchange="uploadFiles(this.files)">
+                    <div class="w-14 h-14 rounded-xl bg-accent-yellow/20 flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-cloud-upload-alt text-2xl text-accent-yellow"></i>
+                    </div>
+                    <h3 class="font-semibold mb-1">Drop files here</h3>
+                    <p class="text-sm text-gray-500">PDF or images, max 10MB each</p>
+                </div>
+
+                <div id="upload-queue" class="hidden card-nb p-4 mb-6">
+                    <div class="flex items-center justify-between mb-3">
+                        <span class="text-sm font-semibold">Upload Progress</span>
+                        <span id="upload-summary" class="text-xs text-gray-500 mono"></span>
+                    </div>
+                    <div id="upload-items" class="space-y-2 max-h-48 overflow-y-auto"></div>
+                    <div id="process-all-btn" class="hidden mt-3">
+                        <button onclick="processAllStatements()" class="btn-nb btn-nb-primary w-full py-2 text-sm">Process All</button>
+                    </div>
+                </div>
+
+                <!-- Processing Progress -->
+                <div id="processing-progress" class="hidden card-nb p-4 mb-6 border-2 border-accent-yellow">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-2">
+                            <span class="loading loading-spinner loading-sm text-accent-yellow"></span>
+                            <span class="text-sm font-semibold">Processing Statements</span>
+                        </div>
+                        <span id="processing-time" class="text-xs text-gray-500 mono">0:00</span>
+                    </div>
+                    
+                    <!-- Progress Bar -->
+                    <div class="w-full bg-surface-300 rounded-full h-3 mb-3">
+                        <div id="processing-bar" class="bg-accent-yellow h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                    
+                    <!-- Status Info -->
+                    <div class="flex items-center justify-between text-sm mb-3">
+                        <span id="processing-status" class="text-gray-400">Initializing...</span>
+                        <span id="processing-count" class="mono">0 / 0</span>
+                    </div>
+                    
+                    <!-- Current File -->
+                    <div id="processing-current" class="text-xs text-gray-500 truncate mb-3">
+                        <i class="fas fa-file-pdf mr-1"></i>
+                        <span id="processing-filename">-</span>
+                    </div>
+                    
+                    <!-- Stats -->
+                    <div class="flex gap-4 text-xs">
+                        <span class="text-green-400"><i class="fas fa-check mr-1"></i><span id="processing-success">0</span> done</span>
+                        <span class="text-red-400"><i class="fas fa-times mr-1"></i><span id="processing-errors">0</span> errors</span>
+                        <span class="text-gray-500"><i class="fas fa-clock mr-1"></i>~<span id="processing-eta">--</span> remaining</span>
+                    </div>
+                    
+                    <!-- Recent Activity -->
+                    <div id="processing-activity" class="mt-3 pt-3 border-t border-surface-300 space-y-1 max-h-24 overflow-y-auto text-xs"></div>
+                </div>
+
+                <div class="card-nb p-4">
+                    <div class="flex items-center justify-between mb-4">
+                        <span class="text-sm font-semibold">History</span>
+                        <button id="process-pending-btn" onclick="processAllStatements()" class="hidden btn-nb btn-nb-secondary px-3 py-1 text-xs">
+                            Process Pending
+                        </button>
+                    </div>
+                    <div id="statements-list" class="space-y-2"></div>
+                </div>
+            </div>
+
+            <!-- Assets -->
+            <div id="tab-assets" class="tab-content p-4 lg:p-6 max-w-7xl mx-auto">
+                <div class="mb-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h1 class="text-xl lg:text-2xl font-bold">Asset Portfolio</h1>
+                            <p class="text-sm text-gray-500">Track your investments</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="refreshAssetPrices()" class="btn-nb btn-nb-secondary px-3 py-1.5 text-sm" id="refresh-prices-btn">
+                                <i class="fas fa-sync-alt mr-1"></i>Refresh Prices
+                            </button>
+                            <button onclick="showAddAssetModal()" class="btn-nb btn-nb-primary px-3 py-1.5 text-sm">
+                                <i class="fas fa-plus mr-1"></i>Add Asset
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sub-tabs -->
+                <div class="flex gap-2 mb-6 border-b border-surface-300 pb-2">
+                    <button onclick="setAssetSubTab('overview')" id="asset-tab-overview" class="asset-subtab px-4 py-2 text-sm rounded-t asset-subtab-active">Overview</button>
+                    <button onclick="setAssetSubTab('holdings')" id="asset-tab-holdings" class="asset-subtab px-4 py-2 text-sm rounded-t">Holdings</button>
+                    <button onclick="setAssetSubTab('transactions')" id="asset-tab-transactions" class="asset-subtab px-4 py-2 text-sm rounded-t">Transactions</button>
+                    <button onclick="setAssetSubTab('analytics')" id="asset-tab-analytics" class="asset-subtab px-4 py-2 text-sm rounded-t">Analytics</button>
+                </div>
+
+                <!-- Overview Sub-tab -->
+                <div id="asset-subtab-overview" class="asset-subtab-content">
+                    <!-- Portfolio Summary Cards -->
+                    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+                        <div class="card-nb p-4">
+                            <p class="text-xs text-gray-500 mb-1">Total Value</p>
+                            <p id="portfolio-total-value" class="text-xl font-bold mono text-accent-yellow">£0.00</p>
+                        </div>
+                        <div class="card-nb p-4">
+                            <p class="text-xs text-gray-500 mb-1">Cost Basis</p>
+                            <p id="portfolio-cost-basis" class="text-xl font-bold mono">£0.00</p>
+                        </div>
+                        <div class="card-nb p-4">
+                            <p class="text-xs text-gray-500 mb-1">Total Gain/Loss</p>
+                            <p id="portfolio-gain-loss" class="text-xl font-bold mono">£0.00</p>
+                        </div>
+                        <div class="card-nb p-4">
+                            <p class="text-xs text-gray-500 mb-1">ROI</p>
+                            <p id="portfolio-roi" class="text-xl font-bold mono">0%</p>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+                        <!-- Allocation Chart -->
+                        <div class="card-nb p-4">
+                            <h3 class="text-sm font-semibold mb-3">Portfolio Allocation</h3>
+                            <div class="h-64">
+                                <canvas id="portfolio-allocation-chart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Performance Metrics -->
+                        <div class="card-nb p-4">
+                            <h3 class="text-sm font-semibold mb-3">Performance Metrics</h3>
+                            <div class="space-y-3">
+                                <div class="flex justify-between items-center py-2 border-b border-surface-300">
+                                    <span class="text-sm text-gray-400">Total Invested</span>
+                                    <span id="metric-invested" class="text-sm mono font-medium">£0.00</span>
+                                </div>
+                                <div class="flex justify-between items-center py-2 border-b border-surface-300">
+                                    <span class="text-sm text-gray-400">Unrealized Gains</span>
+                                    <span id="metric-unrealized" class="text-sm mono font-medium">£0.00</span>
+                                </div>
+                                <div class="flex justify-between items-center py-2 border-b border-surface-300">
+                                    <span class="text-sm text-gray-400">Realized Gains</span>
+                                    <span id="metric-realized" class="text-sm mono font-medium">£0.00</span>
+                                </div>
+                                <div class="flex justify-between items-center py-2 border-b border-surface-300">
+                                    <span class="text-sm text-gray-400">Annualized Return</span>
+                                    <span id="metric-annualized" class="text-sm mono font-medium">-</span>
+                                </div>
+                                <div class="flex justify-between items-center py-2">
+                                    <span class="text-sm text-gray-400">Holdings Count</span>
+                                    <span id="metric-holdings-count" class="text-sm mono font-medium">0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Best/Worst Performers -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <div class="card-nb p-4">
+                            <h3 class="text-sm font-semibold mb-3 text-green-400"><i class="fas fa-arrow-up mr-1"></i>Best Performer</h3>
+                            <div id="best-performer" class="text-gray-500 text-sm">No data</div>
+                        </div>
+                        <div class="card-nb p-4">
+                            <h3 class="text-sm font-semibold mb-3 text-red-400"><i class="fas fa-arrow-down mr-1"></i>Worst Performer</h3>
+                            <div id="worst-performer" class="text-gray-500 text-sm">No data</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Holdings Sub-tab -->
+                <div id="asset-subtab-holdings" class="asset-subtab-content hidden">
+                    <div class="card-nb overflow-hidden">
+                        <table class="table-nb w-full">
+                            <thead>
+                                <tr>
+                                    <th class="text-left">Asset</th>
+                                    <th class="text-right">Quantity</th>
+                                    <th class="text-right hidden sm:table-cell">Avg Price</th>
+                                    <th class="text-right">Current Price</th>
+                                    <th class="text-right hidden sm:table-cell">Value</th>
+                                    <th class="text-right">Gain/Loss</th>
+                                    <th class="w-20"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="holdings-table"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Transactions Sub-tab -->
+                <div id="asset-subtab-transactions" class="asset-subtab-content hidden">
+                    <div class="card-nb overflow-hidden">
+                        <table class="table-nb w-full">
+                            <thead>
+                                <tr>
+                                    <th class="text-left">Date</th>
+                                    <th class="text-left">Asset</th>
+                                    <th class="text-center">Type</th>
+                                    <th class="text-right">Quantity</th>
+                                    <th class="text-right">Price</th>
+                                    <th class="text-right">Total</th>
+                                    <th class="w-20"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="asset-transactions-table"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Analytics Sub-tab -->
+                <div id="asset-subtab-analytics" class="asset-subtab-content hidden">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <!-- Portfolio Value Over Time -->
+                        <div class="card-nb p-4 lg:col-span-2">
+                            <div class="flex items-center justify-between mb-3">
+                                <h3 class="text-sm font-semibold">Portfolio Value Over Time</h3>
+                                <div class="flex items-center gap-1 bg-surface-200 rounded-lg p-1">
+                                    <button onclick="setPortfolioHistoryRange('7')" id="portfolio-range-7" class="portfolio-range-btn px-3 py-1 text-xs rounded">7D</button>
+                                    <button onclick="setPortfolioHistoryRange('30')" id="portfolio-range-30" class="portfolio-range-btn portfolio-range-active px-3 py-1 text-xs rounded">1M</button>
+                                    <button onclick="setPortfolioHistoryRange('90')" id="portfolio-range-90" class="portfolio-range-btn px-3 py-1 text-xs rounded">3M</button>
+                                    <button onclick="setPortfolioHistoryRange('180')" id="portfolio-range-180" class="portfolio-range-btn px-3 py-1 text-xs rounded">6M</button>
+                                    <button onclick="setPortfolioHistoryRange('365')" id="portfolio-range-365" class="portfolio-range-btn px-3 py-1 text-xs rounded">1Y</button>
+                                    <button onclick="setPortfolioHistoryRange('all')" id="portfolio-range-all" class="portfolio-range-btn px-3 py-1 text-xs rounded">All</button>
+                                </div>
+                            </div>
+                            <div class="h-64">
+                                <canvas id="portfolio-history-chart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- By Asset Type -->
+                        <div class="card-nb p-4">
+                            <h3 class="text-sm font-semibold mb-3">Allocation by Type</h3>
+                            <div id="allocation-by-type" class="space-y-2"></div>
+                        </div>
+
+                        <!-- Top Holdings -->
+                        <div class="card-nb p-4">
+                            <h3 class="text-sm font-semibold mb-3">Top Holdings by Value</h3>
+                            <div id="top-holdings-list" class="space-y-2"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings -->
+            <div id="tab-settings" class="tab-content p-4 lg:p-6 max-w-7xl mx-auto">
+                <div class="mb-6">
+                    <h1 class="text-xl lg:text-2xl font-bold">Settings</h1>
+                    <p class="text-sm text-gray-500">Manage your data</p>
+                </div>
+
+                <div class="card-nb p-4 mb-4">
+                    <div class="flex items-center justify-between mb-4">
+                        <span class="text-sm font-semibold">Categories</span>
+                        <button onclick="showCreateCategoryModal()" class="btn-nb btn-nb-secondary px-3 py-1 text-xs">
+                            <i class="fas fa-plus mr-1"></i>Add
+                        </button>
+                    </div>
+                    <div id="categories-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2"></div>
+                </div>
+
+                <div class="card-nb p-4 mb-4">
+                    <div class="flex items-center justify-between mb-4">
+                        <span class="text-sm font-semibold">Auto-Categorization Rules</span>
+                        <button onclick="showCreateRuleModal()" class="btn-nb btn-nb-secondary px-3 py-1 text-xs">
+                            <i class="fas fa-plus mr-1"></i>Add
+                        </button>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="table-nb w-full min-w-[400px]">
+                            <thead>
+                                <tr>
+                                    <th>Pattern</th>
+                                    <th>Type</th>
+                                    <th>Category</th>
+                                    <th class="w-16"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="rules-table"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Data Export/Import -->
+                <div class="card-nb p-4 mb-4">
+                    <div class="flex items-center gap-2 mb-4">
+                        <i class="fas fa-database text-blue-400 text-sm"></i>
+                        <span class="text-sm font-semibold">Data Backup & Migration</span>
+                    </div>
+                    
+                    <!-- Export Section -->
+                    <div class="mb-4 p-3 bg-surface-50 rounded-lg">
+                        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                            <div>
+                                <p class="text-sm font-medium">Export Full Backup</p>
+                                <p class="text-xs text-gray-500">Download all data (transactions, categories, accounts, rules, budgets) as JSON</p>
+                            </div>
+                            <button onclick="exportFullBackup()" class="btn-nb btn-nb-primary px-3 py-1.5 text-xs flex items-center gap-2">
+                                <i class="fas fa-download"></i>Export JSON
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Import Section -->
+                    <div class="p-3 bg-surface-50 rounded-lg">
+                        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-3">
+                            <div>
+                                <p class="text-sm font-medium">Import Backup</p>
+                                <p class="text-xs text-gray-500">Restore data from a JSON backup file (merges with existing data)</p>
+                            </div>
+                            <label class="btn-nb btn-nb-secondary px-3 py-1.5 text-xs flex items-center gap-2 cursor-pointer">
+                                <i class="fas fa-upload"></i>Import JSON
+                                <input type="file" id="import-file" accept=".json" onchange="importFullBackup(this)" class="hidden">
+                            </label>
+                        </div>
+                        <div id="import-status" class="hidden text-xs p-2 rounded"></div>
+                    </div>
+                </div>
+
+                <div class="card-nb p-4 border-red-500/30">
+                    <div class="flex items-center gap-2 mb-3">
+                        <i class="fas fa-exclamation-triangle text-red-400 text-sm"></i>
+                        <span class="text-sm font-semibold text-red-400">Danger Zone</span>
+                    </div>
+                    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 bg-surface-50 rounded-lg">
+                        <div>
+                            <p class="text-sm font-medium">Reset Database</p>
+                            <p class="text-xs text-gray-500">Delete all data permanently</p>
+                        </div>
+                        <button onclick="confirmResetDatabase()" class="btn-nb bg-red-500 text-white px-3 py-1.5 text-xs">Reset</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Mobile Bottom Nav -->
+    <nav class="bottom-nav fixed bottom-0 left-0 right-0 bg-surface-100 border-t border-surface-300 px-2 py-2 z-50 justify-around">
+        <button onclick="showTab('dashboard')" class="flex flex-col items-center gap-1 px-3 py-1 text-gray-500 mobile-nav-item" data-tab="dashboard">
+            <i class="fas fa-th-large text-lg"></i>
+            <span class="text-[10px]">Home</span>
+        </button>
+        <button onclick="showTab('transactions')" class="flex flex-col items-center gap-1 px-3 py-1 text-gray-500 mobile-nav-item" data-tab="transactions">
+            <i class="fas fa-receipt text-lg"></i>
+            <span class="text-[10px]">Activity</span>
+        </button>
+        <button onclick="showTab('pots')" class="flex flex-col items-center gap-1 px-3 py-1 text-gray-500 mobile-nav-item" data-tab="pots">
+            <i class="fas fa-wallet text-lg"></i>
+            <span class="text-[10px]">Accounts</span>
+        </button>
+        <button onclick="showTab('analytics')" class="flex flex-col items-center gap-1 px-3 py-1 text-gray-500 mobile-nav-item" data-tab="analytics">
+            <i class="fas fa-chart-bar text-lg"></i>
+            <span class="text-[10px]">Insights</span>
+        </button>
+        <button onclick="showTab('settings')" class="flex flex-col items-center gap-1 px-3 py-1 text-gray-500 mobile-nav-item" data-tab="settings">
+            <i class="fas fa-ellipsis-h text-lg"></i>
+            <span class="text-[10px]">More</span>
+        </button>
+    </nav>
+
+    <!-- Modals -->
+    <dialog id="edit-modal" class="modal">
+        <div class="modal-nb p-6 w-full max-w-sm mx-4">
+            <h3 class="font-bold mb-4">Edit Transaction</h3>
+            <input type="hidden" id="edit-tx-id">
+            <input type="hidden" id="edit-tx-type">
+            <div class="space-y-3">
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Description</label>
+                    <input type="text" id="edit-description" class="input-nb w-full px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Category</label>
+                    <select id="edit-category" class="input-nb w-full px-3 py-2 text-sm" onchange="onEditCategoryChange()"></select>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Account (Source)</label>
+                    <select id="edit-pot" class="input-nb w-full px-3 py-2 text-sm" onchange="onEditSourceAccountChange()">
+                        <option value="">None</option>
+                    </select>
+                </div>
+                <div id="edit-receiving-account-container" class="hidden">
+                    <label class="text-xs text-gray-500 mb-1 block">Receiving Account</label>
+                    <select id="edit-receiving-account" class="input-nb w-full px-3 py-2 text-sm">
+                        <option value="">External (not tracked)</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">Creates opposite entry in receiving account</p>
+                </div>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="edit-one-off" class="checkbox checkbox-sm checkbox-warning">
+                    <span class="text-sm">One-off</span>
+                </label>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button onclick="hideModal('edit-modal')" class="btn-nb btn-nb-secondary flex-1 py-2 text-sm">Cancel</button>
+                <button onclick="saveTransaction()" class="btn-nb btn-nb-primary flex-1 py-2 text-sm">Save</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop bg-black/60"><button></button></form>
+    </dialog>
+
+    <dialog id="account-modal" class="modal">
+        <div class="modal-nb p-6 w-full max-w-sm mx-4">
+            <h3 class="font-bold mb-4">Create Account</h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Name</label>
+                    <input type="text" id="account-name" class="input-nb w-full px-3 py-2 text-sm" placeholder="Savings">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Description (optional)</label>
+                    <input type="text" id="account-description" class="input-nb w-full px-3 py-2 text-sm" placeholder="For emergencies">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Icon</label>
+                    <select id="account-icon" class="input-nb w-full px-3 py-2 text-sm">
+                        <option value="wallet">Wallet</option>
+                        <option value="piggy-bank">Piggy Bank</option>
+                        <option value="home">Home</option>
+                        <option value="car">Car</option>
+                        <option value="plane">Travel</option>
+                        <option value="gift">Gift</option>
+                        <option value="graduation-cap">Education</option>
+                        <option value="heartbeat">Health</option>
+                        <option value="umbrella">Emergency</option>
+                        <option value="chart-line">Investment</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Color</label>
+                    <input type="color" id="account-color" class="w-full h-10 rounded cursor-pointer" value="#a855f7">
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button onclick="hideModal('account-modal')" class="btn-nb btn-nb-secondary flex-1 py-2 text-sm">Cancel</button>
+                <button onclick="createAccount()" class="btn-nb btn-nb-primary flex-1 py-2 text-sm">Create</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop bg-black/60"><button></button></form>
+    </dialog>
+
+    <dialog id="transfer-modal" class="modal">
+        <div class="modal-nb p-6 w-full max-w-sm mx-4">
+            <h3 class="font-bold mb-4">Transfer Money</h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">From Account</label>
+                    <select id="transfer-from" class="input-nb w-full px-3 py-2 text-sm"></select>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">To Account</label>
+                    <select id="transfer-to" class="input-nb w-full px-3 py-2 text-sm"></select>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Amount</label>
+                    <input type="number" id="transfer-amount" class="input-nb w-full px-3 py-2 text-sm" placeholder="0.00" step="0.01" min="0.01">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Description (optional)</label>
+                    <input type="text" id="transfer-description" class="input-nb w-full px-3 py-2 text-sm" placeholder="Monthly savings">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Date</label>
+                    <input type="date" id="transfer-date" class="input-nb w-full px-3 py-2 text-sm">
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button onclick="hideModal('transfer-modal')" class="btn-nb btn-nb-secondary flex-1 py-2 text-sm">Cancel</button>
+                <button onclick="createTransfer()" class="btn-nb btn-nb-primary flex-1 py-2 text-sm">Transfer</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop bg-black/60"><button></button></form>
+    </dialog>
+
+    <dialog id="category-modal" class="modal">
+        <div class="modal-nb p-6 w-full max-w-sm mx-4">
+            <h3 class="font-bold mb-4">Create Category</h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Name</label>
+                    <input type="text" id="category-name" class="input-nb w-full px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Color</label>
+                    <input type="color" id="category-color" class="w-full h-10 rounded cursor-pointer" value="#06b6d4">
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button onclick="hideModal('category-modal')" class="btn-nb btn-nb-secondary flex-1 py-2 text-sm">Cancel</button>
+                <button onclick="createCategory()" class="btn-nb btn-nb-primary flex-1 py-2 text-sm">Create</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop bg-black/60"><button></button></form>
+    </dialog>
+
+    <dialog id="rule-modal" class="modal">
+        <div class="modal-nb p-6 w-full max-w-sm mx-4">
+            <h3 class="font-bold mb-4">Create Rule</h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Pattern</label>
+                    <input type="text" id="rule-pattern" class="input-nb w-full px-3 py-2 text-sm mono" placeholder="amazon">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Match Type</label>
+                    <select id="rule-match" class="input-nb w-full px-3 py-2 text-sm">
+                        <option value="contains">Contains</option>
+                        <option value="exact">Exact</option>
+                        <option value="regex">Regex</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Category</label>
+                    <select id="rule-category" class="input-nb w-full px-3 py-2 text-sm"></select>
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button onclick="hideModal('rule-modal')" class="btn-nb btn-nb-secondary flex-1 py-2 text-sm">Cancel</button>
+                <button onclick="createRule()" class="btn-nb btn-nb-primary flex-1 py-2 text-sm">Create</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop bg-black/60"><button></button></form>
+    </dialog>
+
+    <!-- Add Transaction Modal -->
+    <dialog id="add-tx-modal" class="modal">
+        <div class="modal-nb p-6 w-full max-w-md mx-4">
+            <h3 class="font-bold mb-4">Add Transaction</h3>
+            <div class="space-y-3">
+                <div class="flex gap-2">
+                    <button type="button" onclick="setTxType('expense')" id="tx-type-expense" class="flex-1 btn-nb btn-nb-primary py-2 text-sm">Expense</button>
+                    <button type="button" onclick="setTxType('income')" id="tx-type-income" class="flex-1 btn-nb btn-nb-secondary py-2 text-sm">Income</button>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Date</label>
+                    <input type="date" id="add-tx-date" class="input-nb w-full px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Description</label>
+                    <input type="text" id="add-tx-description" placeholder="What was this for?" class="input-nb w-full px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Amount (£)</label>
+                    <input type="number" step="0.01" id="add-tx-amount" placeholder="0.00" class="input-nb w-full px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Category</label>
+                    <select id="add-tx-category" class="input-nb w-full px-3 py-2 text-sm"></select>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Account</label>
+                    <select id="add-tx-account" class="input-nb w-full px-3 py-2 text-sm"></select>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Notes (optional)</label>
+                    <textarea id="add-tx-notes" rows="2" placeholder="Add any notes..." class="input-nb w-full px-3 py-2 text-sm"></textarea>
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button onclick="hideModal('add-tx-modal')" class="btn-nb btn-nb-secondary flex-1 py-2 text-sm">Cancel</button>
+                <button onclick="createTransaction()" class="btn-nb btn-nb-primary flex-1 py-2 text-sm">Add</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop bg-black/60"><button></button></form>
+    </dialog>
+
+    <!-- Create Budget Modal -->
+    <dialog id="budget-modal" class="modal">
+        <div class="modal-nb p-6 w-full max-w-sm mx-4">
+            <h3 class="font-bold mb-4">Create Budget</h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Category</label>
+                    <select id="budget-category" class="input-nb w-full px-3 py-2 text-sm"></select>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Monthly Budget (£)</label>
+                    <input type="number" step="0.01" id="budget-amount" placeholder="0.00" class="input-nb w-full px-3 py-2 text-sm">
+                </div>
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" id="budget-rollover" class="checkbox checkbox-sm">
+                    <label class="text-sm text-gray-400">Roll unused budget to next month</label>
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button onclick="hideModal('budget-modal')" class="btn-nb btn-nb-secondary flex-1 py-2 text-sm">Cancel</button>
+                <button onclick="saveBudget()" class="btn-nb btn-nb-primary flex-1 py-2 text-sm">Save</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop bg-black/60"><button></button></form>
+    </dialog>
+
+    <!-- Bulk Edit Modal -->
+    <dialog id="bulk-edit-modal" class="modal">
+        <div class="modal-nb p-6 w-full max-w-md mx-4">
+            <h3 class="font-bold mb-4">Bulk Edit Transactions</h3>
+            <p id="bulk-edit-count" class="text-sm text-gray-400 mb-4">0 transactions selected</p>
+            <div class="space-y-3">
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Set Category (optional)</label>
+                    <select id="bulk-edit-category" class="input-nb w-full px-3 py-2 text-sm" onchange="onBulkEditCategoryChange()">
+                        <option value="">-- Don't change --</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Set Account / Source (optional)</label>
+                    <select id="bulk-edit-account" class="input-nb w-full px-3 py-2 text-sm" onchange="onBulkEditAccountChange()">
+                        <option value="">-- Don't change --</option>
+                    </select>
+                </div>
+                <div id="bulk-edit-receiving-container" class="hidden">
+                    <label class="text-xs text-gray-500 mb-1 block">Set Receiving Account (for transfers)</label>
+                    <select id="bulk-edit-receiving-account" class="input-nb w-full px-3 py-2 text-sm">
+                        <option value="">-- Don't change --</option>
+                        <option value="external">External (not tracked)</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">Creates opposite entry in receiving account for each transaction</p>
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button onclick="hideModal('bulk-edit-modal')" class="btn-nb btn-nb-secondary flex-1 py-2 text-sm">Cancel</button>
+                <button onclick="saveBulkEdit()" class="btn-nb btn-nb-primary flex-1 py-2 text-sm">Apply Changes</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop bg-black/60"><button></button></form>
+    </dialog>
+
+    <!-- Custom Period Modal -->
+    <dialog id="custom-period-modal" class="modal">
+        <div class="modal-nb p-6 w-full max-w-sm mx-4">
+            <h3 class="font-bold mb-4">Custom Date Range</h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Start Date</label>
+                    <input type="date" id="custom-start-date" class="input-nb w-full px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">End Date</label>
+                    <input type="date" id="custom-end-date" class="input-nb w-full px-3 py-2 text-sm">
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button onclick="hideModal('custom-period-modal')" class="btn-nb btn-nb-secondary flex-1 py-2 text-sm">Cancel</button>
+                <button onclick="applyCustomPeriod()" class="btn-nb btn-nb-primary flex-1 py-2 text-sm">Apply</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop bg-black/60"><button></button></form>
+    </dialog>
+
+    <!-- Add Asset Modal -->
+    <dialog id="add-asset-modal" class="modal">
+        <div class="modal-nb p-6 w-full max-w-md mx-4">
+            <h3 class="font-bold mb-4">Add Asset</h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Asset Type</label>
+                    <select id="add-asset-type" class="input-nb w-full px-3 py-2 text-sm" onchange="onAssetTypeChange()">
+                        <option value="crypto">Cryptocurrency</option>
+                        <option value="precious_metal">Precious Metal</option>
+                        <option value="other">Other (Untracked)</option>
+                    </select>
+                </div>
+                <div id="asset-select-container">
+                    <label class="text-xs text-gray-500 mb-1 block">Select Asset</label>
+                    <select id="add-asset-select" class="input-nb w-full px-3 py-2 text-sm">
+                        <option value="">-- Select --</option>
+                    </select>
+                </div>
+                <div id="custom-asset-container" class="hidden space-y-3">
+                    <div>
+                        <label class="text-xs text-gray-500 mb-1 block">Symbol</label>
+                        <input type="text" id="add-asset-symbol" class="input-nb w-full px-3 py-2 text-sm" placeholder="e.g., AAPL">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 mb-1 block">Name</label>
+                        <input type="text" id="add-asset-name" class="input-nb w-full px-3 py-2 text-sm" placeholder="e.g., Apple Inc.">
+                    </div>
+                </div>
+                <div id="untracked-warning" class="hidden bg-yellow-500/20 border border-yellow-500/50 rounded p-3">
+                    <p class="text-xs text-yellow-400"><i class="fas fa-exclamation-triangle mr-1"></i>This asset is UNTRACKED. We cannot provide live pricing or performance insights. The asset will be stored at your specified purchase price.</p>
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button onclick="hideModal('add-asset-modal')" class="btn-nb btn-nb-secondary flex-1 py-2 text-sm">Cancel</button>
+                <button onclick="addAsset()" class="btn-nb btn-nb-primary flex-1 py-2 text-sm">Add Asset</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop bg-black/60"><button></button></form>
+    </dialog>
+
+    <!-- Add Asset Transaction Modal -->
+    <dialog id="add-asset-tx-modal" class="modal">
+        <div class="modal-nb p-6 w-full max-w-md mx-4">
+            <h3 class="font-bold mb-4">Add Transaction</h3>
+            <input type="hidden" id="add-asset-tx-asset-id">
+            <div class="space-y-3">
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Asset</label>
+                    <select id="add-asset-tx-select" class="input-nb w-full px-3 py-2 text-sm"></select>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Transaction Type</label>
+                    <select id="add-asset-tx-type" class="input-nb w-full px-3 py-2 text-sm">
+                        <option value="buy">Buy</option>
+                        <option value="sell">Sell</option>
+                        <option value="transfer">Transfer</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-xs text-gray-500 mb-1 block">Quantity</label>
+                        <input type="number" step="any" id="add-asset-tx-quantity" class="input-nb w-full px-3 py-2 text-sm" placeholder="0.00">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 mb-1 block">Price per Unit (£)</label>
+                        <input type="number" step="any" id="add-asset-tx-price" class="input-nb w-full px-3 py-2 text-sm" placeholder="0.00">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-xs text-gray-500 mb-1 block">Date</label>
+                        <input type="date" id="add-asset-tx-date" class="input-nb w-full px-3 py-2 text-sm">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 mb-1 block">Fee (£)</label>
+                        <input type="number" step="any" id="add-asset-tx-fee" class="input-nb w-full px-3 py-2 text-sm" placeholder="0.00">
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Notes (optional)</label>
+                    <input type="text" id="add-asset-tx-notes" class="input-nb w-full px-3 py-2 text-sm" placeholder="Optional notes">
+                </div>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="add-asset-tx-auto-price" class="checkbox checkbox-sm">
+                    <span class="text-sm">Auto-fetch historical price</span>
+                </label>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button onclick="hideModal('add-asset-tx-modal')" class="btn-nb btn-nb-secondary flex-1 py-2 text-sm">Cancel</button>
+                <button onclick="addAssetTransaction()" class="btn-nb btn-nb-primary flex-1 py-2 text-sm">Add Transaction</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop bg-black/60"><button></button></form>
+    </dialog>
+
+    <script src="/app.js"></script>
+</body>
+</html>
