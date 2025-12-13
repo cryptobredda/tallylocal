@@ -3,7 +3,7 @@ Merchant recognition service - maps transaction descriptions to known merchants 
 """
 
 import re
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 
 # Top merchants with their logo URLs (using Clearbit Logo API for free logos)
 # Format: 'keyword': {'name': 'Display Name', 'domain': 'domain.com'}
@@ -240,9 +240,20 @@ KNOWN_MERCHANTS = {
     'telegram': {'name': 'Telegram', 'domain': 'telegram.org'},
 }
 
+def get_logo_urls(domain: str, size: int = 64) -> Tuple[str, str]:
+    """
+    Return primary and fallback logo URLs. Clearbit is preferred for full-color logos,
+    DuckDuckGo's favicon service acts as a fallback when Clearbit/CDN is blocked.
+    """
+    primary = f"https://logo.clearbit.com/{domain}?size={size}"
+    fallback = f"https://icons.duckduckgo.com/ip3/{domain}.ico"
+    return primary, fallback
+
+
 def get_logo_url(domain: str, size: int = 64) -> str:
-    """Get logo URL from Clearbit Logo API (free, no API key required)"""
-    return f"https://logo.clearbit.com/{domain}?size={size}"
+    """Kept for backward compatibility (returns primary logo URL)."""
+    primary, _ = get_logo_urls(domain, size)
+    return primary
 
 def recognize_merchant(description: str) -> Optional[Dict]:
     """
@@ -260,10 +271,12 @@ def recognize_merchant(description: str) -> Optional[Dict]:
         # e.g., "amazon" should match "AMAZON.CO.UK" but not "AMAZONIAFOODS"
         pattern = r'\b' + re.escape(keyword) + r'\b'
         if re.search(pattern, desc_lower):
+            primary_logo, fallback_logo = get_logo_urls(merchant_info['domain'])
             return {
                 'name': merchant_info['name'],
                 'domain': merchant_info['domain'],
-                'logo_url': get_logo_url(merchant_info['domain']),
+                'logo_url': primary_logo,
+                'logo_fallback_url': fallback_logo,
                 'matched_keyword': keyword
             }
     

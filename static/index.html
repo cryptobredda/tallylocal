@@ -124,6 +124,33 @@
         /* Modal */
         .modal-nb { background: #16161f; border: 1px solid #2a2a38; border-radius: 16px; }
         
+        /* Transaction detail drawer */
+        .transaction-detail-panel {
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+        .transaction-detail-panel.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .transaction-detail-overlay {
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            pointer-events: none;
+        }
+        .transaction-detail-panel.active .transaction-detail-overlay {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .transaction-detail-drawer {
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+        }
+        .transaction-detail-panel.active .transaction-detail-drawer {
+            transform: translateX(0);
+        }
+        
         /* Scrollbar */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -419,7 +446,7 @@
                         <thead>
                             <tr>
                                 <th style="width: 40px;">
-                                    <input type="checkbox" id="select-all" class="checkbox checkbox-sm" onchange="toggleSelectAll()">
+                                    <input type="checkbox" id="select-all" class="checkbox checkbox-sm" onchange="toggleSelectAll(event)">
                                 </th>
                                 <th class="cursor-pointer" style="width: 80px;" onclick="sortBy('date')">
                                     Date <span id="sort-icon-date" class="text-accent-yellow ml-1"><i class="fas fa-sort-down"></i></span>
@@ -438,6 +465,24 @@
                         </thead>
                         <tbody id="transactions-table"></tbody>
                     </table>
+                </div>
+
+                <!-- Selection Summary -->
+                <div id="selection-summary" class="hidden card-nb p-4 mt-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 items-start">
+                        <div>
+                            <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Selected</p>
+                            <p id="selection-summary-count" class="text-lg font-semibold">0 selected</p>
+                        </div>
+                        <div>
+                            <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Net Total</p>
+                            <p id="selection-summary-total" class="text-lg font-semibold mono">£0.00</p>
+                        </div>
+                        <div class="flex flex-col sm:items-end">
+                            <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Similarity</p>
+                            <span id="selection-summary-status" class="badge-nb bg-surface-300/60 text-gray-200">Varies transactions</span>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Pagination -->
@@ -1441,6 +1486,25 @@
         </div>
         <form method="dialog" class="modal-backdrop bg-black/60"><button></button></form>
     </dialog>
+
+    <!-- Transaction Detail Drawer -->
+    <div id="transaction-detail-panel" class="transaction-detail-panel fixed inset-0 z-50">
+        <div class="transaction-detail-overlay absolute inset-0 bg-black/40" onclick="closeTransactionDetail()"></div>
+        <div class="transaction-detail-drawer absolute top-0 right-0 h-full w-full sm:w-[360px] lg:w-[420px] bg-surface-100 border-l border-surface-300 shadow-2xl flex flex-col">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-surface-300">
+                <div>
+                    <p class="text-xs text-gray-500 uppercase tracking-wide">Details</p>
+                    <h3 id="transaction-detail-title" class="font-semibold">Transaction</h3>
+                </div>
+                <button onclick="closeTransactionDetail()" class="btn-nb btn-nb-secondary px-2 py-1 text-xs">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div id="transaction-detail-body" class="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
+                <p class="text-sm text-gray-500">Select a transaction to inspect every field.</p>
+            </div>
+        </div>
+    </div>
 
     <script src="/app.js"></script>
 </body>

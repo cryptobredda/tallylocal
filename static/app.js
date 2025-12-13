@@ -15,6 +15,7 @@ let cashflowMonths = 6;
 let dashboardPeriod = 'mtd';  // Default: Month to date
 let dashboardStartDate = null;
 let dashboardEndDate = null;
+let activeTransactionId = null;
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -24,6 +25,12 @@ document.addEventListener('DOMContentLoaded', () => {
     loadPots();
     loadDashboard();
     showTab('dashboard');
+});
+
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+        closeTransactionDetail();
+    }
 });
 
 async function checkStatus() {
@@ -572,6 +579,8 @@ async function loadTransactions() {
         renderTransactionsTable(pageTransactions);
         renderPagination({ pages: totalPages, total: totalItems });
         updateSortIcons();
+        renderTransactionDetails();
+        applyTransactionRowStates();
     } catch (e) {
         console.error('Transactions load failed:', e);
     }
@@ -631,31 +640,40 @@ function renderTransactionsTable(transactions) {
     const tbody = document.getElementById('transactions-table');
     if (!transactions.length) {
         tbody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-gray-500">No transactions</td></tr>`;
+        applyTransactionRowStates();
         return;
     }
     
     tbody.innerHTML = transactions.map(t => {
         const isIncome = t.type === 'income';
         const color = isIncome ? 'green' : 'red';
-        const isSelected = selectedTransactions.has(t.id);
         
         // Merchant logo or fallback icon
         let iconHtml;
-        if (t.merchant && t.merchant.logo_url) {
-            iconHtml = `<img src="${t.merchant.logo_url}" alt="${t.merchant.name}" 
-                            class="w-5 h-5 flex-shrink-0 rounded object-contain bg-white"
-                            onerror="this.onerror=null;this.parentElement.innerHTML='<span class=\\'w-5 h-5 flex-shrink-0 rounded flex items-center justify-center bg-${color}-500/20\\'><i class=\\'fas fa-arrow-${isIncome ? 'down' : 'up'} text-${color}-400 text-[10px]\\'></i></span>';">`;
-        } else {
-            iconHtml = `<span class="w-5 h-5 flex-shrink-0 rounded flex items-center justify-center bg-${color}-500/20">
+        const fallbackIcon = `
+            <span class="w-5 h-5 flex-shrink-0 rounded flex items-center justify-center bg-${color}-500/20">
                 <i class="fas fa-arrow-${isIncome ? 'down' : 'up'} text-${color}-400 text-[10px]"></i>
             </span>`;
+        if (t.merchant && t.merchant.logo_url) {
+            const fallbackUrl = t.merchant.logo_fallback_url || '';
+            iconHtml = `
+                <span class="w-5 h-5 flex-shrink-0 rounded bg-white border border-surface-200 flex items-center justify-center overflow-hidden">
+                    <img src="${t.merchant.logo_url}" alt="${t.merchant.name || 'Merchant'}" 
+                        class="w-full h-full object-contain p-0.5"
+                        data-fallback-url="${fallbackUrl}"
+                        onerror="handleMerchantLogoError(this)">
+                    <span class="merchant-icon-fallback hidden w-full h-full flex items-center justify-center bg-${color}-500/20">
+                        <i class="fas fa-arrow-${isIncome ? 'down' : 'up'} text-${color}-400 text-[10px]"></i>
+                    </span>
+                </span>`;
+        } else {
+            iconHtml = fallbackIcon;
         }
         
         return `
-            <tr class="${isSelected ? 'bg-accent-yellow/10' : ''}">
-                <td>
-                    <input type="checkbox" class="checkbox checkbox-sm" ${isSelected ? 'checked' : ''} 
-                           onchange="toggleTransactionSelect(${t.id})">
+            <tr class="transaction-row border-l-2 border-transparent cursor-pointer" data-transaction-row="${t.id}" onclick="handleTransactionRowClick(${t.id}, event)">
+                <td data-no-detail="true">
+                    <input type="checkbox" class="checkbox checkbox-sm" onchange="toggleTransactionSelect(${t.id}, event)">
                 </td>
                 <td class="mono text-gray-400">${new Date(t.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</td>
                 <td class="max-w-0 w-full">
@@ -679,6 +697,198 @@ function renderTransactionsTable(transactions) {
     }).join('');
     
     updateBulkEditBar();
+    applyTransactionRowStates();
+}
+
+function applyTransactionRowStates() {
+    document.querySelectorAll('[data-transaction-row]').forEach(row => {
+        const id = parseInt(row.dataset.transactionRow, 10);
+        if (!id) return;
+        const isSelected = selectedTransactions.has(id);
+        const isActive = activeTransactionId === id;
+        row.classList.toggle('bg-accent-yellow/10', !!isSelected);
+        row.classList.toggle('border-accent-yellow', !!isActive);
+        const checkbox = row.querySelector('input[type="checkbox"]');
+        if (checkbox) checkbox.checked = !!isSelected;
+    });
+}
+
+function handleTransactionRowClick(id, event) {
+    if (event) {
+        if (event.target.closest('[data-no-detail="true"]')) return;
+        if (event.target.closest('button') || event.target.closest('input') || event.target.closest('label') || event.target.closest('a')) {
+            return;
+        }
+    }
+    openTransactionDetail(id);
+}
+
+function openTransactionDetail(id) {
+    activeTransactionId = id;
+    renderTransactionDetails();
+    applyTransactionRowStates();
+}
+
+function closeTransactionDetail() {
+    if (!activeTransactionId) {
+        const panel = document.getElementById('transaction-detail-panel');
+        if (panel) panel.classList.remove('active');
+        return;
+    }
+    activeTransactionId = null;
+    renderTransactionDetails();
+    applyTransactionRowStates();
+}
+
+function renderTransactionDetails() {
+    const panel = document.getElementById('transaction-detail-panel');
+    const bodyEl = document.getElementById('transaction-detail-body');
+    const titleEl = document.getElementById('transaction-detail-title');
+    if (!panel || !bodyEl || !titleEl) return;
+    
+    if (!activeTransactionId) {
+        panel.classList.remove('active');
+        titleEl.textContent = 'Transaction details';
+        bodyEl.innerHTML = '<p class="text-sm text-gray-500">Select a transaction to inspect every field.</p>';
+        return;
+    }
+    
+    const tx = getTransactionById(activeTransactionId);
+    if (!tx) {
+        activeTransactionId = null;
+        renderTransactionDetails();
+        return;
+    }
+    
+    titleEl.textContent = tx.description || 'Transaction details';
+    panel.classList.add('active');
+    
+    const isIncome = tx.type === 'income';
+    const amountDisplay = `${isIncome ? '+' : '-'}${formatCurrency(tx.amount)}`;
+    const fullDate = new Date(tx.date).toLocaleString('en-GB', {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+    const tags = (tx.tags || '').split(',').map(tag => tag.trim()).filter(Boolean);
+    const notes = tx.notes ? `<p class="text-sm whitespace-pre-line">${escapeHTML(tx.notes)}</p>` : '<p class="text-sm text-gray-500">No notes captured</p>';
+    const tagsHtml = tags.length
+        ? tags.map(tag => `<span class="badge-nb bg-surface-300/60 text-xs">${escapeHTML(tag)}</span>`).join('')
+        : '<span class="text-sm text-gray-500">No tags</span>';
+    const categoryBadge = tx.category_name
+        ? `<span class="badge-nb" style="background:${tx.category_color}20;color:${tx.category_color}">${escapeHTML(tx.category_name)}</span>`
+        : '<span class="badge-nb bg-surface-300/40 text-gray-300">Uncategorized</span>';
+    const flags = [
+        tx.is_one_off ? '<span class="badge-nb bg-purple-500/20 text-purple-300">One-off</span>' : '',
+        tx.is_recurring ? '<span class="badge-nb bg-blue-500/20 text-blue-300">Recurring</span>' : '',
+        tx.is_internal_transfer ? '<span class="badge-nb bg-cyan-500/20 text-cyan-300">Internal transfer</span>' : ''
+    ].filter(Boolean);
+    const flagsHtml = flags.length ? flags.join('') : '<span class="text-xs text-gray-500">No special flags</span>';
+    const accountName = tx.account_name || tx.pot_name || 'No account selected';
+    const accountTypeRaw = tx.account_type ? tx.account_type.replace(/_/g, ' ') : null;
+    const accountType = accountTypeRaw ? accountTypeRaw.replace(/\b\w/g, char => char.toUpperCase()) : null;
+    const merchantName = tx.merchant && tx.merchant.name ? escapeHTML(tx.merchant.name) : 'Not detected';
+    const merchantCategory = tx.merchant && tx.merchant.category 
+        ? `<span class="badge-nb bg-surface-200 text-xs ml-2">${escapeHTML(tx.merchant.category)}</span>`
+        : '';
+    const balanceAfter = typeof tx.balance_after === 'number' ? formatCurrency(tx.balance_after) : '—';
+    const statementFile = tx.statement_file ? escapeHTML(tx.statement_file.split(/[\\/]/).pop()) : 'Not linked';
+    const createdAt = tx.created_at ? new Date(tx.created_at).toLocaleString('en-GB') : '—';
+    const updatedAt = tx.updated_at ? new Date(tx.updated_at).toLocaleString('en-GB') : '—';
+    const originalDescription = tx.original_description ? escapeHTML(tx.original_description) : '—';
+    const linkedId = tx.linked_transaction_id ? `#${tx.linked_transaction_id}` : '—';
+    const bankName = tx.bank_name ? escapeHTML(tx.bank_name) : '—';
+    const accountNumber = tx.account_number ? escapeHTML(tx.account_number) : '—';
+    
+    bodyEl.innerHTML = `
+        <div class="card-nb p-4 space-y-3">
+            <div>
+                <p class="text-xs text-gray-500 uppercase tracking-wide">Amount</p>
+                <p class="text-3xl font-semibold mono text-${isIncome ? 'green' : 'red'}-400">${amountDisplay}</p>
+            </div>
+            <div>
+                <p class="text-xs text-gray-500 uppercase tracking-wide">Full Date</p>
+                <p class="text-sm">${fullDate}</p>
+            </div>
+            <div class="flex flex-wrap gap-2">${flagsHtml}</div>
+        </div>
+        <div class="card-nb p-4 space-y-3">
+            <h4 class="text-sm font-semibold">Transaction Details</h4>
+            <div class="space-y-2 text-sm">
+                <div class="flex items-start justify-between gap-4">
+                    <span class="text-gray-500">Category</span>
+                    <span>${categoryBadge}</span>
+                </div>
+                <div class="flex items-start justify-between gap-4">
+                    <span class="text-gray-500">Account</span>
+                    <span class="text-right">${escapeHTML(accountName)}${accountType ? `<span class="badge-nb bg-surface-200 text-[10px] uppercase ml-2">${escapeHTML(accountType)}</span>` : ''}</span>
+                </div>
+                <div class="flex items-start justify-between gap-4">
+                    <span class="text-gray-500">Type</span>
+                    <span class="text-right capitalize">${escapeHTML(tx.type)}</span>
+                </div>
+                <div class="flex items-start justify-between gap-4">
+                    <span class="text-gray-500">Merchant</span>
+                    <span class="text-right">${merchantName}${merchantCategory}</span>
+                </div>
+                <div class="flex items-start justify-between gap-4">
+                    <span class="text-gray-500">Original Description</span>
+                    <span class="text-right">${originalDescription}</span>
+                </div>
+            </div>
+        </div>
+        <div class="card-nb p-4 space-y-3">
+            <h4 class="text-sm font-semibold">Financial Data</h4>
+            <div class="space-y-2 text-sm">
+                <div class="flex items-start justify-between gap-4">
+                    <span class="text-gray-500">Balance After</span>
+                    <span class="text-right mono">${balanceAfter}</span>
+                </div>
+                <div class="flex items-start justify-between gap-4">
+                    <span class="text-gray-500">Bank</span>
+                    <span class="text-right">${bankName}</span>
+                </div>
+                <div class="flex items-start justify-between gap-4">
+                    <span class="text-gray-500">Account #</span>
+                    <span class="text-right">${accountNumber}</span>
+                </div>
+                <div class="flex items-start justify-between gap-4">
+                    <span class="text-gray-500">Statement</span>
+                    <span class="text-right">${statementFile}</span>
+                </div>
+            </div>
+        </div>
+        <div class="card-nb p-4 space-y-3">
+            <h4 class="text-sm font-semibold">Notes & Tags</h4>
+            ${notes}
+            <div class="flex flex-wrap gap-2">${tagsHtml}</div>
+        </div>
+        <div class="card-nb p-4 space-y-2 text-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-gray-500">Transaction ID</span>
+                <span class="mono">#${tx.id}</span>
+            </div>
+            <div class="flex items-center justify-between">
+                <span class="text-gray-500">Linked Transaction</span>
+                <span class="mono">${linkedId}</span>
+            </div>
+            <div class="flex items-center justify-between">
+                <span class="text-gray-500">Created</span>
+                <span>${createdAt}</span>
+            </div>
+            <div class="flex items-center justify-between">
+                <span class="text-gray-500">Updated</span>
+                <span>${updatedAt}</span>
+            </div>
+        </div>
+    `;
+}
+
+function getTransactionById(id) {
+    return allTransactions.find(t => t.id === id) || filteredTransactions.find(t => t.id === id);
 }
 
 function highlightSearch(text) {
@@ -686,6 +896,32 @@ function highlightSearch(text) {
     if (!query) return text;
     const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
     return text.replace(regex, '<mark class="bg-yellow-500/30 px-0.5 rounded">$1</mark>');
+}
+
+function escapeHTML(str = '') {
+    return (str || '').replace(/[&<>"']/g, char => {
+        switch (char) {
+            case '&': return '&amp;';
+            case '<': return '&lt;';
+            case '>': return '&gt;';
+            case '"': return '&quot;';
+            case '\'': return '&#39;';
+            default: return char;
+        }
+    });
+}
+
+function handleMerchantLogoError(img) {
+    if (!img) return;
+    const fallbackUrl = img.dataset.fallbackUrl;
+    if (fallbackUrl && img.dataset.fallbackTried !== '1') {
+        img.dataset.fallbackTried = '1';
+        img.src = fallbackUrl;
+        return;
+    }
+    img.classList.add('hidden');
+    const fallback = img.nextElementSibling;
+    if (fallback) fallback.classList.remove('hidden');
 }
 
 function handleSearch(event) {
@@ -1221,6 +1457,11 @@ async function deleteTransaction(id) {
     if (!confirm('Delete this transaction?')) return;
     try {
         await fetch(`${API}/transactions/${id}`, { method: 'DELETE' });
+        if (activeTransactionId === id) {
+            activeTransactionId = null;
+            renderTransactionDetails();
+            applyTransactionRowStates();
+        }
         loadTransactions();
         loadDashboard();
     } catch (e) { console.error('Delete failed:', e); }
@@ -1988,16 +2229,19 @@ async function saveBudget() {
 
 // ==================== BULK EDIT ====================
 
-function toggleTransactionSelect(id) {
+function toggleTransactionSelect(id, event) {
+    if (event) event.stopPropagation();
     if (selectedTransactions.has(id)) {
         selectedTransactions.delete(id);
     } else {
         selectedTransactions.add(id);
     }
-    renderTransactionsTable(filteredTransactions.length ? filteredTransactions : allTransactions);
+    applyTransactionRowStates();
+    updateBulkEditBar();
 }
 
-function toggleSelectAll() {
+function toggleSelectAll(event) {
+    if (event) event.stopPropagation();
     const selectAllCheckbox = document.getElementById('select-all');
     const transactions = filteredTransactions.length ? filteredTransactions : allTransactions;
     
@@ -2006,13 +2250,15 @@ function toggleSelectAll() {
     } else {
         selectedTransactions.clear();
     }
-    renderTransactionsTable(transactions);
+    applyTransactionRowStates();
+    updateBulkEditBar();
 }
 
 function clearSelection() {
     selectedTransactions.clear();
     document.getElementById('select-all').checked = false;
-    renderTransactionsTable(filteredTransactions.length ? filteredTransactions : allTransactions);
+    applyTransactionRowStates();
+    updateBulkEditBar();
 }
 
 function updateBulkEditBar() {
@@ -2039,6 +2285,42 @@ function updateBulkEditBar() {
         selectAll.checked = false;
         selectAll.indeterminate = false;
     }
+    
+    updateSelectionSummary();
+}
+
+function updateSelectionSummary() {
+    const summaryEl = document.getElementById('selection-summary');
+    const countEl = document.getElementById('selection-summary-count');
+    const totalEl = document.getElementById('selection-summary-total');
+    const statusEl = document.getElementById('selection-summary-status');
+    if (!summaryEl || !countEl || !totalEl || !statusEl) return;
+    
+    const selectedList = allTransactions.filter(t => selectedTransactions.has(t.id));
+    if (!selectedList.length) {
+        summaryEl.classList.add('hidden');
+        countEl.textContent = '0 selected';
+        totalEl.textContent = formatCurrency(0);
+        statusEl.textContent = 'Varies transactions';
+        statusEl.className = 'badge-nb bg-surface-300/60 text-gray-200';
+        return;
+    }
+    
+    summaryEl.classList.remove('hidden');
+    countEl.textContent = `${selectedList.length} selected`;
+    const total = selectedList.reduce((sum, tx) => sum + (tx.type === 'income' ? tx.amount : -tx.amount), 0);
+    totalEl.textContent = formatCurrency(total);
+    
+    const first = selectedList[0];
+    const allMatch = selectedList.every(tx => 
+        tx.description === first.description &&
+        tx.amount === first.amount &&
+        tx.type === first.type
+    );
+    statusEl.textContent = allMatch ? 'Identical transactions' : 'Varies transactions';
+    statusEl.className = allMatch 
+        ? 'badge-nb bg-green-500/20 text-green-300'
+        : 'badge-nb bg-surface-300/60 text-gray-200';
 }
 
 function showBulkEditModal() {

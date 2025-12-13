@@ -585,6 +585,7 @@ def get_transactions():
                 'id': t.id,
                 'date': t.date.isoformat(),
                 'description': t.description,
+                'original_description': t.original_description,
                 'amount': t.amount,
                 'type': t.transaction_type.value,
                 'category_id': t.category_id,
@@ -592,8 +593,22 @@ def get_transactions():
                 'category_color': t.category.color if t.category else None,
                 'pot_id': t.pot_id,
                 'pot_name': t.pot.name if t.pot else None,
+                'account_id': t.account_id,
+                'account_name': t.account.name if t.account else None,
+                'account_type': t.account.account_type.value if t.account and t.account.account_type else None,
+                'account_color': t.account.color if t.account else None,
                 'is_one_off': t.is_one_off,
-                'bank_name': t.bank_name
+                'is_recurring': t.is_recurring,
+                'is_internal_transfer': t.is_internal_transfer,
+                'linked_transaction_id': t.linked_transaction_id,
+                'balance_after': t.balance_after,
+                'notes': t.notes,
+                'tags': t.tags,
+                'bank_name': t.bank_name,
+                'account_number': t.account_number,
+                'statement_file': t.statement_file,
+                'created_at': t.created_at.isoformat() if t.created_at else None,
+                'updated_at': t.updated_at.isoformat() if t.updated_at else None
             }
             # Add merchant info if recognized
             merchant = recognize_merchant(t.description)
