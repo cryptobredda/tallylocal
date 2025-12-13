@@ -1,15 +1,29 @@
 import os
+import shutil
 import hashlib
 from datetime import datetime, timedelta
-from flask import Blueprint, request, jsonify, send_from_directory, current_app
+from flask import Blueprint, request, jsonify, send_from_directory, current_app, session as flask_session, g
 from werkzeug.utils import secure_filename
 from sqlalchemy import func, and_, or_
-from app.database import get_session, init_db, Base, engine
+from app.database import get_session, init_db, DB_PATH, set_request_db_path
 from app.models import (
     Transaction, Category, Account, BankStatement, TransactionRule, 
     TransactionType, Settings, AccountType, Asset, AssetHolding, 
     AssetTransaction, AssetPriceCache, AssetType, AssetTransactionType,
     AssetPriceHistory, PortfolioSnapshot
+)
+from app.auth_service import (
+    get_user_count,
+    create_user,
+    get_user_by_username,
+    get_user_by_id,
+    verify_password,
+    update_last_login,
+    list_users,
+    delete_user_account,
+    set_user_admin_status,
+    reset_auth_store,
+    USER_DATA_DIR
 )
 from app.ocr_service import ocr_service, transaction_parser, HSBCStatementParser
 from app.categorization_service import categorization_service
@@ -18,11 +32,41 @@ from app.analytics_service import analytics_service
 
 # Backward compatibility
 pot_service = account_service
+APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 main_bp = Blueprint('main', __name__)
 api_bp = Blueprint('api', __name__)
 
 ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'bmp', 'tiff'}
+
+
+def _serialize_user(user):
+    if not user:
+        return None
+    db_file = os.path.basename(user.db_path) if user.db_path else None
+    return {
+        'id': user.id,
+        'username': user.username,
+        'is_admin': user.is_admin,
+        'db_file': db_file,
+        'created_at': user.created_at.isoformat() if user.created_at else None,
+        'last_login_at': user.last_login_at.isoformat() if user.last_login_at else None
+    }
+
+
+@api_bp.before_request
+def ensure_authenticated():
+    public_endpoints = {
+        'api.auth_status',
+        'api.auth_setup',
+        'api.auth_login',
+        'api.auth_logout'
+    }
+    if request.endpoint in public_endpoints:
+        return
+    user = getattr(g, 'current_user', None)
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
 
 
 def calculate_file_hash(file_path: str) -> str:
@@ -38,9 +82,197 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def require_admin():
+    user = getattr(g, 'current_user', None)
+    return user and user.is_admin
+
+
+def get_user_upload_folder():
+    base_folder = current_app.config.get('UPLOAD_FOLDER', os.path.join(APP_DIR, 'uploads'))
+    user = getattr(g, 'current_user', None)
+    if not user or user.db_path == DB_PATH:
+        folder = base_folder
+    else:
+        folder = os.path.join(base_folder, f'user_{user.id}')
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def remove_user_uploads(user_id):
+    base_folder = current_app.config.get('UPLOAD_FOLDER', os.path.join(APP_DIR, 'uploads'))
+    user_folder = os.path.join(base_folder, f'user_{user_id}')
+    if os.path.isdir(user_folder):
+        shutil.rmtree(user_folder, ignore_errors=True)
+
+
 @main_bp.route('/')
 def index():
     return send_from_directory(current_app.static_folder, 'index.html')
+
+
+@api_bp.route('/auth/status', methods=['GET'])
+def auth_status():
+    needs_setup = get_user_count() == 0
+    user = getattr(g, 'current_user', None)
+    return jsonify({
+        'needs_setup': needs_setup,
+        'authenticated': bool(user),
+        'user': _serialize_user(user) if user else None
+    })
+
+
+@api_bp.route('/auth/setup', methods=['POST'])
+def auth_setup():
+    if get_user_count() > 0:
+        return jsonify({'error': 'Setup already completed'}), 400
+    data = request.json or {}
+    username = (data.get('username') or '').strip()
+    password = data.get('password') or ''
+    if not username or not password:
+        return jsonify({'error': 'Username and password are required'}), 400
+    try:
+        user = create_user(username=username, password=password, is_admin=True, db_path=DB_PATH)
+        flask_session['user_id'] = user.id
+        flask_session['db_path'] = user.db_path
+        flask_session['username'] = user.username
+        flask_session['is_admin'] = True
+        g.current_user = user
+        return jsonify({'status': 'ok', 'user': _serialize_user(user)})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@api_bp.route('/auth/login', methods=['POST'])
+def auth_login():
+    data = request.json or {}
+    username = (data.get('username') or '').strip()
+    password = data.get('password') or ''
+    if not username or not password:
+        return jsonify({'error': 'Username and password required'}), 400
+    user = get_user_by_username(username)
+    if not user or not verify_password(user, password):
+        return jsonify({'error': 'Invalid credentials'}), 401
+    flask_session['user_id'] = user.id
+    flask_session['db_path'] = user.db_path
+    flask_session['username'] = user.username
+    flask_session['is_admin'] = user.is_admin
+    g.current_user = user
+    set_request_db_path(user.db_path)
+    update_last_login(user)
+    return jsonify({'status': 'ok', 'user': _serialize_user(user)})
+
+
+@api_bp.route('/auth/logout', methods=['POST'])
+def auth_logout():
+    flask_session.clear()
+    g.current_user = None
+    set_request_db_path(DB_PATH)
+    return jsonify({'status': 'ok'})
+
+
+@api_bp.route('/admin/users', methods=['GET', 'POST'])
+def manage_users():
+    if not require_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    if request.method == 'GET':
+        users = [_serialize_user(u) for u in list_users()]
+        return jsonify({'users': users})
+    data = request.json or {}
+    username = (data.get('username') or '').strip()
+    password = data.get('password') or ''
+    if not username or not password:
+        return jsonify({'error': 'Username and password required'}), 400
+    try:
+        user = create_user(username=username, password=password, is_admin=False)
+        # Initialize their personal database
+        init_db(user.db_path)
+        fresh = get_user_by_id(user.id)
+        return jsonify({'status': 'ok', 'user': _serialize_user(fresh)})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/users/<int:user_id>', methods=['PUT', 'DELETE'])
+def admin_user_detail(user_id):
+    if not require_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    target = get_user_by_id(user_id)
+    if not target:
+        return jsonify({'error': 'User not found'}), 404
+    if request.method == 'DELETE':
+        if user_id == g.current_user.id:
+            return jsonify({'error': 'You cannot delete the account you are using'}), 400
+        if target.db_path == DB_PATH:
+            return jsonify({'error': 'Primary admin cannot be deleted. Use full reset instead.'}), 400
+        try:
+            info = delete_user_account(user_id)
+            if info and info.get('db_path') and os.path.exists(info['db_path']):
+                try:
+                    os.remove(info['db_path'])
+                except OSError:
+                    pass
+            remove_user_uploads(user_id)
+            with processing_lock:
+                processing_status_map.pop(user_id, None)
+            return jsonify({'status': 'ok'})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    else:
+        data = request.json or {}
+        if 'is_admin' not in data:
+            return jsonify({'error': 'is_admin flag required'}), 400
+        if user_id == g.current_user.id and not data['is_admin']:
+            return jsonify({'error': 'You cannot remove your own admin rights'}), 400
+        try:
+            updated = set_user_admin_status(user_id, bool(data['is_admin']))
+            if not updated:
+                return jsonify({'error': 'User not found'}), 404
+            refreshed = get_user_by_id(user_id)
+            return jsonify({'status': 'ok', 'user': _serialize_user(refreshed)})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/reset', methods=['POST'])
+def admin_reset_app():
+    if not require_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    data = request.json or {}
+    if data.get('confirm') != 'RESET':
+        return jsonify({'error': 'Confirmation text mismatch'}), 400
+    try:
+        # remove user db files
+        for user in list_users():
+            if user.db_path and os.path.exists(user.db_path):
+                try:
+                    os.remove(user.db_path)
+                except OSError:
+                    pass
+        # remove auth db and reinit
+        reset_auth_store()
+        # remove uploads
+        uploads_root = current_app.config.get('UPLOAD_FOLDER', os.path.join(APP_DIR, 'uploads'))
+        if os.path.isdir(uploads_root):
+            shutil.rmtree(uploads_root, ignore_errors=True)
+        os.makedirs(uploads_root, exist_ok=True)
+        # remove per-user data dir
+        if os.path.isdir(USER_DATA_DIR):
+            shutil.rmtree(USER_DATA_DIR, ignore_errors=True)
+        os.makedirs(USER_DATA_DIR, exist_ok=True)
+        # remove default DB and reinit
+        if os.path.exists(DB_PATH):
+            os.remove(DB_PATH)
+        init_db(DB_PATH)
+        with processing_lock:
+            processing_status_map.clear()
+        flask_session.clear()
+        g.current_user = None
+        set_request_db_path(DB_PATH)
+        return jsonify({'status': 'reset'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @api_bp.route('/status', methods=['GET'])
@@ -92,8 +324,7 @@ def upload_statement():
     if not files or (len(files) == 1 and files[0].filename == ''):
         return jsonify({'error': 'No file selected'}), 400
     
-    upload_folder = current_app.config.get('UPLOAD_FOLDER', 'uploads')
-    os.makedirs(upload_folder, exist_ok=True)
+    upload_folder = get_user_upload_folder()
     
     session = get_session()
     results = []
@@ -283,7 +514,7 @@ def process_statement(statement_id):
 import threading
 import time
 
-processing_status = {
+PROCESSING_TEMPLATE = {
     'is_processing': False,
     'started_at': None,
     'current_file': None,
@@ -291,33 +522,53 @@ processing_status = {
     'total_files': 0,
     'completed': [],
     'errors': [],
-    'phase': 'idle'  # idle, initializing, processing, complete
+    'phase': 'idle'
 }
+processing_status_map = {}
 processing_lock = threading.Lock()
+
+
+def _status_key():
+    user = getattr(g, 'current_user', None)
+    return user.id if user else 'global'
+
+
+def _get_processing_status(create=True):
+    key = _status_key()
+    status = processing_status_map.get(key)
+    if not status and create:
+        status = PROCESSING_TEMPLATE.copy()
+        status['completed'] = []
+        status['errors'] = []
+        processing_status_map[key] = status
+    return status
+
 
 def update_processing_status(**kwargs):
     with processing_lock:
-        processing_status.update(kwargs)
+        status = _get_processing_status()
+        status.update(kwargs)
 
 @api_bp.route('/process-status', methods=['GET'])
 def get_processing_status():
     """Get current processing status for progress tracking"""
     with processing_lock:
+        status = _get_processing_status()
         elapsed = None
-        if processing_status['started_at']:
-            elapsed = time.time() - processing_status['started_at']
+        if status['started_at']:
+            elapsed = time.time() - status['started_at']
         
         return jsonify({
-            'is_processing': processing_status['is_processing'],
-            'phase': processing_status['phase'],
-            'current_file': processing_status['current_file'],
-            'current_index': processing_status['current_index'],
-            'total_files': processing_status['total_files'],
-            'completed_count': len(processing_status['completed']),
-            'error_count': len(processing_status['errors']),
+            'is_processing': status['is_processing'],
+            'phase': status['phase'],
+            'current_file': status['current_file'],
+            'current_index': status['current_index'],
+            'total_files': status['total_files'],
+            'completed_count': len(status['completed']),
+            'error_count': len(status['errors']),
             'elapsed_seconds': elapsed,
-            'completed': processing_status['completed'][-5:],  # Last 5 completed
-            'errors': processing_status['errors'][-5:]  # Last 5 errors
+            'completed': status['completed'][-5:],
+            'errors': status['errors'][-5:]
         })
 
 @api_bp.route('/process-all', methods=['POST'])
@@ -328,7 +579,8 @@ def process_all_pending():
     
     # Check if already processing
     with processing_lock:
-        if processing_status['is_processing']:
+        status = _get_processing_status()
+        if status['is_processing']:
             return jsonify({'error': 'Processing already in progress'}), 409
     
     # Get account_id from request body (optional)
@@ -440,7 +692,8 @@ def process_all_pending():
                 results.append(result)
                 
                 with processing_lock:
-                    processing_status['completed'].append(result)
+                    status = _get_processing_status()
+                    status['completed'].append(result)
                 
             except Exception as e:
                 import traceback
@@ -462,7 +715,8 @@ def process_all_pending():
                 results.append(result)
                 
                 with processing_lock:
-                    processing_status['errors'].append(result)
+                    status = _get_processing_status()
+                    status['errors'].append(result)
             finally:
                 session.close()
         

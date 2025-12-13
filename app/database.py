@@ -1,30 +1,71 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, scoped_session
-from sqlalchemy.ext.declarative import declarative_base
 import os
+from flask import g, session as flask_session, has_request_context
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
 
-# Get the directory where the app is located
+# Paths
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(APP_DIR, 'finance_tracker.db')
-DATABASE_URL = os.getenv('DATABASE_URL', f'sqlite:///{DB_PATH}')
 
-engine = create_engine(DATABASE_URL, echo=False)
-Session = scoped_session(sessionmaker(bind=engine))
+# Engine/session caches keyed by db path
+_engine_cache = {}
+_session_factory_cache = {}
+
 Base = declarative_base()
 
-def init_db():
-    from app import models
-    Base.metadata.create_all(engine)
-    print(f"Database initialized at: {DB_PATH}")
-    
-    # Initialize default categories and accounts
-    _init_default_categories()
-    _init_default_accounts()
 
-def _init_default_categories():
-    """Create default categories if they don't exist"""
+def _resolve_db_path(db_path=None):
+    """Return the active database path for this request/context."""
+    if db_path:
+        return db_path
+    if has_request_context():
+        requested = getattr(g, 'current_db_path', None)
+        if requested:
+            return requested
+        stored = flask_session.get('db_path')
+        if stored:
+            g.current_db_path = stored
+            return stored
+    return DB_PATH
+
+
+def get_engine(db_path=None):
+    """Return (and cache) a SQLAlchemy engine for the given DB path."""
+    path = _resolve_db_path(db_path)
+    engine = _engine_cache.get(path)
+    if not engine:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        engine = create_engine(f'sqlite:///{path}', echo=False, connect_args={'check_same_thread': False})
+        _engine_cache[path] = engine
+    return engine
+
+
+def get_session(db_path=None):
+    """Create a new session bound to the resolved engine."""
+    path = _resolve_db_path(db_path)
+    factory = _session_factory_cache.get(path)
+    if not factory:
+        engine = get_engine(path)
+        factory = sessionmaker(bind=engine)
+        _session_factory_cache[path] = factory
+    return factory()
+
+
+def init_db(db_path=None):
+    """Initialise a finance database (schema + defaults)."""
+    target_path = _resolve_db_path(db_path)
+    engine = get_engine(target_path)
+    from app import models  # noqa: F401
+    Base.metadata.create_all(engine)
+    print(f"Database initialized at: {target_path}")
+    _init_default_categories(target_path)
+    _init_default_accounts(target_path)
+
+
+def _init_default_categories(db_path):
+    """Create default categories if they don't exist."""
     from app.models import Category, TransactionRule
-    
     DEFAULT_CATEGORIES = [
         {'name': 'Groceries', 'color': '#22c55e', 'icon': 'shopping-cart', 'keywords': ['tesco', 'sainsbury', 'asda', 'aldi', 'lidl', 'morrisons', 'waitrose', 'co-op', 'grocery', 'supermarket']},
         {'name': 'Transport', 'color': '#3b82f6', 'icon': 'car', 'keywords': ['uber', 'lyft', 'taxi', 'train', 'bus', 'tfl', 'oyster', 'petrol', 'fuel', 'shell', 'bp', 'esso']},
@@ -39,8 +80,8 @@ def _init_default_categories():
         {'name': 'Housing', 'color': '#f97316', 'icon': 'home', 'keywords': ['rent', 'mortgage', 'council tax', 'insurance']},
         {'name': 'Uncategorized', 'color': '#94a3b8', 'icon': 'help-circle', 'keywords': []},
     ]
-    
-    session = Session()
+
+    session = get_session(db_path)
     try:
         existing = session.query(Category).count()
         if existing == 0:
@@ -53,7 +94,7 @@ def _init_default_categories():
                 )
                 session.add(category)
                 session.flush()
-                
+
                 for keyword in cat_data['keywords']:
                     rule = TransactionRule(
                         pattern=keyword,
@@ -62,27 +103,26 @@ def _init_default_categories():
                         is_active=True
                     )
                     session.add(rule)
-            
+
             session.commit()
-            print(f"Created {len(DEFAULT_CATEGORIES)} default categories")
+            print(f"Created {len(DEFAULT_CATEGORIES)} default categories in {db_path}")
     except Exception as e:
         session.rollback()
         print(f"Error creating default categories: {e}")
     finally:
         session.close()
 
-def _init_default_accounts():
-    """Create default Main Account if it doesn't exist"""
+
+def _init_default_accounts(db_path):
+    """Create default Main Account if it doesn't exist."""
     from app.models import Account, AccountType
-    
-    session = Session()
+    session = get_session(db_path)
     try:
-        # Check if main account exists
         main_exists = session.query(Account).filter(
             Account.account_type == AccountType.MAIN,
-            Account.is_active == True
+            Account.is_active.is_(True)
         ).first()
-        
+
         if not main_exists:
             main_account = Account(
                 name='Main Account',
@@ -94,16 +134,15 @@ def _init_default_accounts():
             )
             session.add(main_account)
             session.commit()
-            print("Created default Main Account")
+            print(f"Created default Main Account in {db_path}")
     except Exception as e:
         session.rollback()
         print(f"Error creating default account: {e}")
     finally:
         session.close()
 
-def get_session():
-    return Session()
 
-def remove_session():
-    """Remove the current session - call this at the end of requests"""
-    Session.remove()
+def set_request_db_path(db_path):
+    """Store the db path for the current request context."""
+    if has_request_context():
+        g.current_db_path = db_path

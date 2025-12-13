@@ -151,6 +151,17 @@
             transform: translateX(0);
         }
         
+        .auth-overlay {
+            background: rgba(0,0,0,0.85);
+        }
+        .auth-card {
+            background: #16161f;
+            border: 1px solid #2a2a38;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 360px;
+        }
+        
         /* Scrollbar */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -165,6 +176,7 @@
     </style>
 </head>
 <body class="bg-surface-50 text-white min-h-screen">
+    <div id="app-shell" class="hidden">
     <!-- Mobile Header -->
     <header class="lg:hidden sticky top-0 z-40 bg-surface-50/95 backdrop-blur border-b border-surface-300 px-4 py-3">
         <div class="flex items-center justify-between">
@@ -177,6 +189,11 @@
             </button>
         </div>
     </header>
+    
+    <div id="user-menu" class="hidden border-b border-surface-200 px-4 py-2 flex items-center justify-end gap-3 text-sm">
+        <span class="text-gray-400">Signed in as <span id="user-display-name" class="font-semibold text-white"></span></span>
+        <button onclick="logout()" class="btn-nb btn-nb-secondary px-3 py-1 text-xs">Logout</button>
+    </div>
 
     <div class="flex">
         <!-- Sidebar (Desktop) -->
@@ -213,6 +230,9 @@
                 </a>
                 <a onclick="showTab('settings')" class="nav-item flex items-center gap-3 cursor-pointer" data-tab="settings">
                     <i class="fas fa-cog"></i>Settings
+                </a>
+                <a onclick="showTab('admin')" id="admin-nav" class="nav-item flex items-center gap-3 cursor-pointer hidden" data-tab="admin">
+                    <i class="fas fa-user-shield"></i>Admin
                 </a>
             </nav>
 
@@ -1074,6 +1094,56 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Admin -->
+            <div id="tab-admin" class="tab-content p-4 lg:p-6 max-w-7xl mx-auto hidden">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                    <div>
+                        <h1 class="text-xl lg:text-2xl font-bold">Admin Dashboard</h1>
+                        <p class="text-sm text-gray-500">Manage local users and data silos</p>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div class="card-nb p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-semibold">Users</h3>
+                        </div>
+                        <div id="admin-users-list" class="space-y-2"></div>
+                    </div>
+                    <div class="card-nb p-4">
+                        <h3 class="text-sm font-semibold mb-3">Create User</h3>
+                        <form id="admin-create-user-form" class="space-y-3">
+                            <div>
+                                <label class="text-xs text-gray-500 mb-1 block">Username</label>
+                                <input type="text" id="admin-new-username" class="input-nb w-full px-3 py-2 text-sm" placeholder="new user name">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500 mb-1 block">Password</label>
+                                <input type="password" id="admin-new-password" class="input-nb w-full px-3 py-2 text-sm" placeholder="••••••••">
+                            </div>
+                            <div id="admin-error" class="hidden text-xs text-red-400"></div>
+                            <button type="submit" class="btn-nb btn-nb-primary w-full py-2 text-sm flex items-center justify-center gap-2">
+                                <i class="fas fa-user-plus"></i>Create User
+                            </button>
+                            <p class="text-xs text-gray-500">A dedicated offline database file is created for every user.</p>
+                        </form>
+                    </div>
+                    <div class="card-nb p-4 border border-red-500/40">
+                        <h3 class="text-sm font-semibold text-red-400 mb-3">Reset Entire App</h3>
+                        <p class="text-xs text-gray-400 mb-3">Deletes every user, database, and upload. Use only if you want a fresh install.</p>
+                        <form id="admin-reset-form" class="space-y-3">
+                            <div>
+                                <label class="text-xs text-gray-500 mb-1 block">Confirm</label>
+                                <input type="text" id="admin-reset-confirm" class="input-nb w-full px-3 py-2 text-sm" placeholder='Type "RESET" to confirm'>
+                            </div>
+                            <div id="admin-reset-status" class="hidden text-xs"></div>
+                            <button type="submit" class="btn-nb bg-red-500 text-white w-full py-2 text-sm font-semibold flex items-center justify-center gap-2">
+                                <i class="fas fa-trash"></i>Reset Everything
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
@@ -1099,7 +1169,60 @@
             <i class="fas fa-ellipsis-h text-lg"></i>
             <span class="text-[10px]">More</span>
         </button>
+        <button onclick="showTab('admin')" id="admin-mobile-nav" class="flex flex-col items-center gap-1 px-3 py-1 text-gray-500 mobile-nav-item hidden" data-tab="admin">
+            <i class="fas fa-user-shield text-lg"></i>
+            <span class="text-[10px]">Admin</span>
+        </button>
     </nav>
+
+    </div> <!-- End app shell -->
+
+    <!-- Login Screen -->
+    <div id="login-screen" class="auth-overlay fixed inset-0 hidden items-center justify-center px-4 flex">
+        <div class="auth-card p-6 space-y-4">
+            <div class="text-center space-y-1">
+                <p class="text-xs uppercase tracking-wide text-gray-500">Tally Local</p>
+                <h2 class="text-xl font-bold">Sign In</h2>
+                <p class="text-xs text-gray-500">Enter your credentials to access your offline data</p>
+            </div>
+            <form id="login-form" class="space-y-3">
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Username</label>
+                    <input type="text" id="login-username" class="input-nb w-full px-3 py-2 text-sm" autocomplete="username">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Password</label>
+                    <input type="password" id="login-password" class="input-nb w-full px-3 py-2 text-sm" autocomplete="current-password">
+                </div>
+                <div id="login-error" class="hidden text-xs text-red-400"></div>
+                <button type="submit" class="btn-nb btn-nb-primary w-full py-2 text-sm font-semibold">Sign In</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Setup Screen -->
+    <div id="setup-screen" class="auth-overlay fixed inset-0 hidden items-center justify-center px-4 flex">
+        <div class="auth-card p-6 space-y-4">
+            <div class="text-center space-y-1">
+                <p class="text-xs uppercase tracking-wide text-gray-500">Welcome</p>
+                <h2 class="text-xl font-bold">Create Admin Account</h2>
+                <p class="text-xs text-gray-500">This first account controls access to your existing data.</p>
+            </div>
+            <form id="setup-form" class="space-y-3">
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Admin Username</label>
+                    <input type="text" id="setup-username" class="input-nb w-full px-3 py-2 text-sm" autocomplete="username">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 mb-1 block">Admin Password</label>
+                    <input type="password" id="setup-password" class="input-nb w-full px-3 py-2 text-sm" autocomplete="new-password">
+                </div>
+                <div id="setup-error" class="hidden text-xs text-red-400"></div>
+                <button type="submit" class="btn-nb btn-nb-primary w-full py-2 text-sm font-semibold">Create Admin</button>
+                <p class="text-xs text-gray-500 text-center">Your current database will be attached to this admin user.</p>
+            </form>
+        </div>
+    </div>
 
     <!-- Modals -->
     <dialog id="edit-modal" class="modal">

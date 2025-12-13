@@ -1,7 +1,12 @@
 import os
-from flask import Flask
+from flask import Flask, g, session as flask_session
 from flask_cors import CORS
-from app.database import init_db, remove_session
+from app.database import init_db, set_request_db_path, DB_PATH
+from app.auth_service import (
+    init_auth_db,
+    get_user_count,
+    get_user_by_id,
+)
 
 def create_app():
     app = Flask(__name__, static_folder='../static', static_url_path='')
@@ -15,14 +20,28 @@ def create_app():
     # Ensure upload folder exists
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     
-    CORS(app)
+    CORS(app, supports_credentials=True)
     
-    init_db()
+    init_db(DB_PATH)
+    init_auth_db()
     
-    # Clean up database session after each request
-    @app.teardown_appcontext
-    def shutdown_session(exception=None):
-        remove_session()
+    @app.before_request
+    def load_current_user():
+        user_id = flask_session.get('user_id')
+        if user_id:
+            user = get_user_by_id(user_id)
+            if user:
+                g.current_user = user
+                set_request_db_path(user.db_path)
+                return
+            # user missing - clear session
+            flask_session.clear()
+        g.current_user = None
+        set_request_db_path(DB_PATH)
+    
+    @app.context_processor
+    def inject_setup_flag():
+        return {'needs_setup': get_user_count() == 0}
     
     from app.routes import main_bp, api_bp
     app.register_blueprint(main_bp)

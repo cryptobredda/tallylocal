@@ -16,16 +16,450 @@ let dashboardPeriod = 'mtd';  // Default: Month to date
 let dashboardStartDate = null;
 let dashboardEndDate = null;
 let activeTransactionId = null;
+let currentUser = null;
+let isAuthenticated = false;
+let appBootstrapped = false;
+
+const originalFetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+    const response = await originalFetch(...args);
+    if (response.status === 401) {
+        handleUnauthorized();
+    }
+    return response;
+};
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+let needsInitialSetup = false;
 
 document.addEventListener('DOMContentLoaded', () => {
-    checkStatus();
-    loadCategories();
-    loadPots();
-    loadDashboard();
-    showTab('dashboard');
+    bindAuthForms();
+    initApp();
 });
+
+async function initApp() {
+    await refreshAuthState();
+    if (isAuthenticated) {
+        bootstrapAuthenticatedApp();
+    }
+}
+
+async function refreshAuthState() {
+    try {
+        const res = await originalFetch(`${API}/auth/status`);
+        const data = await res.json();
+        needsInitialSetup = data.needs_setup;
+        if (data.authenticated) {
+            currentUser = data.user;
+            isAuthenticated = true;
+            hideLoginScreen();
+            hideSetupScreen();
+            updateUserUI();
+        } else {
+            isAuthenticated = false;
+            currentUser = null;
+            appBootstrapped = false;
+            if (needsInitialSetup) {
+                showSetupScreen();
+            } else {
+                showLoginScreen();
+            }
+        }
+    } catch (e) {
+        console.error('Failed to check auth status', e);
+        showLoginScreen('Unable to reach server');
+    }
+}
+
+function bootstrapAuthenticatedApp(forceReload = false) {
+    const appShell = document.getElementById('app-shell');
+    if (appShell) appShell.classList.remove('hidden');
+    updateUserUI();
+    
+    if (!appBootstrapped || forceReload) {
+        appBootstrapped = true;
+        checkStatus();
+        loadCategories();
+        loadPots();
+        loadDashboard();
+        showTab('dashboard');
+    } else {
+        loadDashboard();
+    }
+}
+
+function bindAuthForms() {
+    const loginForm = document.getElementById('login-form');
+    if (loginForm) {
+        loginForm.addEventListener('submit', submitLogin);
+    }
+    const setupForm = document.getElementById('setup-form');
+    if (setupForm) {
+        setupForm.addEventListener('submit', submitSetup);
+    }
+    const adminCreateForm = document.getElementById('admin-create-user-form');
+    if (adminCreateForm) {
+        adminCreateForm.addEventListener('submit', createAdminUser);
+    }
+    const adminResetForm = document.getElementById('admin-reset-form');
+    if (adminResetForm) {
+        adminResetForm.addEventListener('submit', resetEntireApp);
+    }
+}
+
+async function submitLogin(event) {
+    event.preventDefault();
+    const username = document.getElementById('login-username').value.trim();
+    const password = document.getElementById('login-password').value;
+    if (!username || !password) {
+        setLoginError('Enter username and password');
+        return;
+    }
+    try {
+        const res = await fetch(`${API}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Login failed');
+        currentUser = data.user;
+        isAuthenticated = true;
+        setLoginError('');
+        hideLoginScreen();
+        resetAppState();
+        bootstrapAuthenticatedApp(true);
+    } catch (e) {
+        setLoginError(e.message);
+    }
+}
+
+async function submitSetup(event) {
+    event.preventDefault();
+    const username = document.getElementById('setup-username').value.trim();
+    const password = document.getElementById('setup-password').value;
+    if (!username || !password) {
+        setSetupError('Choose username and password');
+        return;
+    }
+    try {
+        const res = await fetch(`${API}/auth/setup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Setup failed');
+        currentUser = data.user;
+        isAuthenticated = true;
+        hideSetupScreen();
+        resetAppState();
+        bootstrapAuthenticatedApp(true);
+    } catch (e) {
+        setSetupError(e.message);
+    }
+}
+
+function handleUnauthorized() {
+    isAuthenticated = false;
+    currentUser = null;
+    appBootstrapped = false;
+    resetAppState();
+    const shell = document.getElementById('app-shell');
+    if (shell) shell.classList.add('hidden');
+    showLoginScreen();
+}
+
+function showLoginScreen(message = '') {
+    const screen = document.getElementById('login-screen');
+    if (screen) screen.classList.remove('hidden');
+    const shell = document.getElementById('app-shell');
+    if (shell) shell.classList.add('hidden');
+    if (message) setLoginError(message);
+}
+
+function hideLoginScreen() {
+    const screen = document.getElementById('login-screen');
+    if (screen) screen.classList.add('hidden');
+    setLoginError('');
+}
+
+function showSetupScreen(message = '') {
+    const screen = document.getElementById('setup-screen');
+    if (screen) screen.classList.remove('hidden');
+    const shell = document.getElementById('app-shell');
+    if (shell) shell.classList.add('hidden');
+    if (message) setSetupError(message);
+}
+
+function hideSetupScreen() {
+    const screen = document.getElementById('setup-screen');
+    if (screen) screen.classList.add('hidden');
+    setSetupError('');
+}
+
+function setLoginError(msg) {
+    const el = document.getElementById('login-error');
+    if (el) {
+        el.textContent = msg;
+        el.classList.toggle('hidden', !msg);
+    }
+}
+
+function setSetupError(msg) {
+    const el = document.getElementById('setup-error');
+    if (el) {
+        el.textContent = msg;
+        el.classList.toggle('hidden', !msg);
+    }
+}
+
+async function logout() {
+    try {
+        await fetch(`${API}/auth/logout`, { method: 'POST' });
+    } catch (e) {
+        console.warn('Logout failed', e);
+    }
+    isAuthenticated = false;
+    currentUser = null;
+    appBootstrapped = false;
+    resetAppState();
+    const shell = document.getElementById('app-shell');
+    if (shell) shell.classList.add('hidden');
+    showLoginScreen();
+}
+
+function updateUserUI() {
+    const userMenu = document.getElementById('user-menu');
+    const userLabel = document.getElementById('user-display-name');
+    const adminNav = document.getElementById('admin-nav');
+    const adminMobileNav = document.getElementById('admin-mobile-nav');
+    if (isAuthenticated && currentUser) {
+        if (userMenu) userMenu.classList.remove('hidden');
+        if (userLabel) userLabel.textContent = currentUser.username;
+        if (currentUser.is_admin) {
+            adminNav?.classList.remove('hidden');
+            adminMobileNav?.classList.remove('hidden');
+        } else {
+            adminNav?.classList.add('hidden');
+            adminMobileNav?.classList.add('hidden');
+        }
+    } else {
+        userMenu?.classList.add('hidden');
+        adminNav?.classList.add('hidden');
+        adminMobileNav?.classList.add('hidden');
+    }
+}
+
+function resetAppState() {
+    categories = [];
+    pots = [];
+    accounts = [];
+    allTransactions = [];
+    filteredTransactions = [];
+    selectedTransactions = new Set();
+    currentPage = 1;
+    perPage = 15;
+    sortColumn = 'date';
+    sortDirection = 'desc';
+    activeTransactionId = null;
+    dashboardPeriod = 'mtd';
+    dashboardStartDate = null;
+    dashboardEndDate = null;
+
+    if (categoryChart) {
+        categoryChart.destroy();
+        categoryChart = null;
+    }
+    if (cashflowChart) {
+        cashflowChart.destroy();
+        cashflowChart = null;
+    }
+
+    [
+        ['stat-balance', '£0'],
+        ['stat-income', '£0'],
+        ['stat-expenses', '£0'],
+        ['stat-net', '£0'],
+        ['stat-pots', '£0'],
+        ['daily-avg', '£0'],
+        ['tx-count', '0'],
+        ['biggest-expense', '£0'],
+        ['biggest-expense-cat', '-'],
+        ['category-total', '£0'],
+        ['period-label', '—']
+    ].forEach(([id, value]) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = value;
+    });
+
+    [
+        'transactions-table',
+        'transactions-pagination',
+        'transactions-info',
+        'transactions-page-info',
+        'accounts-grid',
+        'transfers-list',
+        'recent-transactions',
+        'analytics-category-breakdown',
+        'analytics-top-merchants',
+        'admin-users-list'
+    ].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+    });
+
+    const summaryEl = document.getElementById('selection-summary');
+    if (summaryEl) summaryEl.classList.add('hidden');
+
+    const txPanel = document.getElementById('transaction-detail-panel');
+    if (txPanel) txPanel.classList.remove('active');
+
+    const selectAll = document.getElementById('select-all');
+    if (selectAll) {
+        selectAll.checked = false;
+        selectAll.indeterminate = false;
+    }
+}
+
+async function loadAdminDashboard() {
+    if (!currentUser || !currentUser.is_admin) return;
+    try {
+        const res = await fetch(`${API}/admin/users`);
+        if (!res.ok) throw new Error('Failed to load users');
+        const data = await res.json();
+        renderAdminUsers(data.users || []);
+    } catch (e) {
+        setAdminError(e.message);
+    }
+}
+
+function renderAdminUsers(users) {
+    const container = document.getElementById('admin-users-list');
+    if (!container) return;
+    if (!users.length) {
+        container.innerHTML = '<p class="text-sm text-gray-500">No users yet.</p>';
+        return;
+    }
+    container.innerHTML = users.map(u => {
+        const controls = (currentUser && currentUser.id !== u.id) ? `
+            <div class="flex items-center gap-2">
+                <button class="btn-nb btn-nb-secondary px-2 py-1 text-[11px]" onclick="toggleUserAdmin(${u.id}, ${u.is_admin ? 'false' : 'true'})">
+                    ${u.is_admin ? 'Remove Admin' : 'Make Admin'}
+                </button>
+                ${u.db_file === 'finance_tracker.db' ? '' : `<button class="btn-nb bg-red-500/20 text-red-400 px-2 py-1 text-[11px]" onclick="deleteUserAccount(${u.id}, '${u.username}')">Delete</button>`}
+            </div>` : '<span class="text-xs text-gray-500">This is you</span>';
+        return `
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between py-2 border-b border-surface-300 text-sm gap-2">
+                <div>
+                    <p class="font-semibold">${u.username} ${u.is_admin ? '<span class="badge-nb bg-yellow-500/20 text-yellow-300 ml-1">Admin</span>' : ''}</p>
+                    <p class="text-gray-500 text-xs">Created ${u.created_at ? new Date(u.created_at).toLocaleString() : '-'}</p>
+                    <p class="text-[11px] text-gray-500">DB: ${u.db_file || 'n/a'}</p>
+                </div>
+                ${controls}
+            </div>
+        `;
+    }).join('');
+}
+
+function setAdminError(msg) {
+    const el = document.getElementById('admin-error');
+    if (el) {
+        el.textContent = msg;
+        el.classList.toggle('hidden', !msg);
+    }
+}
+
+async function createAdminUser(event) {
+    event.preventDefault();
+    if (!currentUser?.is_admin) return;
+    const username = document.getElementById('admin-new-username').value.trim();
+    const password = document.getElementById('admin-new-password').value;
+    if (!username || !password) {
+        setAdminError('Provide username and password');
+        return;
+    }
+    try {
+        const res = await fetch(`${API}/admin/users`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to create user');
+        setAdminError('');
+        document.getElementById('admin-create-user-form').reset();
+        loadAdminDashboard();
+    } catch (e) {
+        setAdminError(e.message);
+    }
+}
+
+async function deleteUserAccount(userId, username) {
+    if (!currentUser?.is_admin) return;
+    if (!confirm(`Delete user "${username}"? Their local data file will be removed.`)) {
+        return;
+    }
+    try {
+        const res = await fetch(`${API}/admin/users/${userId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to delete user');
+        loadAdminDashboard();
+    } catch (e) {
+        setAdminError(e.message);
+    }
+}
+
+async function toggleUserAdmin(userId, makeAdmin) {
+    if (!currentUser?.is_admin) return;
+    try {
+        const res = await fetch(`${API}/admin/users/${userId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_admin: makeAdmin })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to update user');
+        loadAdminDashboard();
+    } catch (e) {
+        setAdminError(e.message);
+    }
+}
+
+async function resetEntireApp(event) {
+    event.preventDefault();
+    if (!currentUser?.is_admin) return;
+    const confirmInput = document.getElementById('admin-reset-confirm');
+    const code = confirmInput?.value?.trim();
+    if (code !== 'RESET') {
+        setAdminResetStatus('Type RESET to confirm', true);
+        return;
+    }
+    if (!confirm('This will delete all users, databases, and uploads. Continue?')) return;
+    try {
+        const res = await fetch(`${API}/admin/reset`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm: 'RESET' })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Reset failed');
+        setAdminResetStatus('System reset. Please create a new admin.', false);
+        await refreshAuthState();
+        showSetupScreen();
+    } catch (e) {
+        setAdminResetStatus(e.message, true);
+    }
+}
+
+function setAdminResetStatus(msg, isError) {
+    const el = document.getElementById('admin-reset-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.toggle('hidden', !msg);
+    el.classList.toggle('text-red-400', !!isError);
+    el.classList.toggle('text-green-400', !isError);
+}
 
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
@@ -49,6 +483,9 @@ async function checkStatus() {
 }
 
 function showTab(tabName) {
+    if (tabName === 'admin' && (!currentUser || !currentUser.is_admin)) {
+        return;
+    }
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.mobile-nav-item').forEach(b => {
@@ -77,6 +514,7 @@ function showTab(tabName) {
     if (tabName === 'upload') loadStatements();
     if (tabName === 'settings') { loadCategoriesView(); loadRules(); }
     if (tabName === 'assets') loadAssets();
+    if (tabName === 'admin') loadAdminDashboard();
 }
 
 async function loadDashboard() {
