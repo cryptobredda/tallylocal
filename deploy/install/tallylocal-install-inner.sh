@@ -2,7 +2,7 @@
 # Inner install script — executed inside the LXC by build_container()
 # Sets up Tally Local using the published Docker image from GHCR
 
-REPO="YOUR_USERNAME/tallylocal"
+REPO="cryptobredda/tallylocal"
 IMAGE="ghcr.io/${REPO}:latest"
 INSTALL_DIR="/opt/tallylocal"
 

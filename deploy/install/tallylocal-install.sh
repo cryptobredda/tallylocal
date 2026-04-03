@@ -3,7 +3,7 @@ source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxV
 # Copyright (c) 2021-2026 tteck
 # Author: tteck (tteckster)
 # License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
-# Source: https://github.com/YOUR_USERNAME/tallylocal
+# Source: https://github.com/cryptobredda/tallylocal
 
 APP="Tally Local"
 var_tags="${var_tags:-finance;docker}"
