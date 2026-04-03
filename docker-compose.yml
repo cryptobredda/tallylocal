@@ -3,7 +3,7 @@ version: '3.9'
 services:
   finance:
     build: .
-    container_name: finance-ai
+    container_name: tallylocal
     ports:
       - "5000:5000"
     environment:

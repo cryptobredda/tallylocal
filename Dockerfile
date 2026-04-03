@@ -35,3 +35,8 @@ VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:5000/ || exit 1
 CMD ["python", "run.py"]
+
+LABEL org.opencontainers.image.source="https://github.com/YOUR_USERNAME/tallylocal" \
+      org.opencontainers.image.description="Tally Local - 100% offline personal finance tracker" \
+      org.opencontainers.image.title="Tally Local" \
+      org.opencontainers.image.vendor="Tally Local"
