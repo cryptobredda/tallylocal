@@ -121,6 +121,12 @@
         .portfolio-range-btn:hover { color: #fff; background: #22222e; }
         .portfolio-range-active { color: #facc15 !important; background: #22222e !important; }
         
+        .wallet-history-range-btn { color: #888; transition: all 0.15s; }
+        .wallet-history-range-btn:hover { color: #fff; background: #22222e; }
+        .wallet-history-active { color: #facc15 !important; background: #22222e !important; }
+        .wallet-view-tab { color: #888; border-bottom: 2px solid transparent; }
+        .wallet-view-tab.wallet-view-active { color: #facc15; border-bottom-color: #facc15; }
+        
         /* Modal */
         .modal-nb { background: #16161f; border: 1px solid #2a2a38; border-radius: 16px; }
         
@@ -855,19 +861,34 @@
                     <button onclick="setAssetSubTab('holdings')" id="asset-tab-holdings" class="asset-subtab px-4 py-2 text-sm rounded-t">Holdings</button>
                     <button onclick="setAssetSubTab('transactions')" id="asset-tab-transactions" class="asset-subtab px-4 py-2 text-sm rounded-t">Transactions</button>
                     <button onclick="setAssetSubTab('analytics')" id="asset-tab-analytics" class="asset-subtab px-4 py-2 text-sm rounded-t">Analytics</button>
+                    <button onclick="setAssetSubTab('wallets')" id="asset-tab-wallets" class="asset-subtab px-4 py-2 text-sm rounded-t">Wallets</button>
                 </div>
 
                 <!-- Overview Sub-tab -->
                 <div id="asset-subtab-overview" class="asset-subtab-content">
                     <!-- Portfolio Summary Cards -->
-                    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+                    <div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
                         <div class="card-nb p-4">
-                            <p class="text-xs text-gray-500 mb-1">Total Value</p>
+                            <p class="text-xs text-gray-500 mb-1">Total Value (Assets + Wallets)</p>
                             <p id="portfolio-total-value" class="text-xl font-bold mono text-accent-yellow">£0.00</p>
+                            <p id="portfolio-total-breakdown" class="text-[11px] text-gray-500 mt-1">Assets £0 + Wallets £0</p>
                         </div>
                         <div class="card-nb p-4">
                             <p class="text-xs text-gray-500 mb-1">Cost Basis</p>
                             <p id="portfolio-cost-basis" class="text-xl font-bold mono">£0.00</p>
+                        </div>
+                        <div class="card-nb p-4">
+                            <p class="text-xs text-gray-500 mb-1">Asset Value</p>
+                            <p id="portfolio-asset-value" class="text-xl font-bold mono">£0.00</p>
+                        </div>
+                        <div class="card-nb p-4">
+                            <div class="flex items-center justify-between mb-1">
+                                <p class="text-xs text-gray-500">Wallet Value</p>
+                                <select id="wallet-total-filter" class="bg-surface-100 text-[10px] rounded px-2 py-0.5" onchange="setWalletOverviewFilter(this.value)">
+                                    <option value="all">All</option>
+                                </select>
+                            </div>
+                            <p id="portfolio-wallet-value" class="text-xl font-bold mono">£0.00</p>
                         </div>
                         <div class="card-nb p-4">
                             <p class="text-xs text-gray-500 mb-1">Total Gain/Loss</p>
@@ -951,10 +972,56 @@
 
                 <!-- Transactions Sub-tab -->
                 <div id="asset-subtab-transactions" class="asset-subtab-content hidden">
+                    <div class="card-nb p-4 mb-4">
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                            <div>
+                                <label class="text-xs text-gray-500 mb-1 block">Search</label>
+                                <input type="text" id="asset-tx-search" class="input-nb w-full px-3 py-2 text-sm" placeholder="Description or notes">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500 mb-1 block">Asset</label>
+                                <select id="asset-tx-asset" class="input-nb w-full px-3 py-2 text-sm">
+                                    <option value="all">All assets</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-500 mb-1 block">Type</label>
+                                <select id="asset-tx-type" class="input-nb w-full px-3 py-2 text-sm">
+                                    <option value="all">All</option>
+                                    <option value="buy">Buy</option>
+                                    <option value="sell">Sell</option>
+                                    <option value="transfer">Transfer</option>
+                                    <option value="other">Other</option>
+                                </select>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label class="text-xs text-gray-500 mb-1 block">From</label>
+                                    <input type="date" id="asset-tx-start" class="input-nb w-full px-3 py-2 text-sm">
+                                </div>
+                                <div>
+                                    <label class="text-xs text-gray-500 mb-1 block">To</label>
+                                    <input type="date" id="asset-tx-end" class="input-nb w-full px-3 py-2 text-sm">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-end gap-2 mt-3">
+                            <button class="btn-nb btn-nb-secondary px-3 py-1.5 text-xs" onclick="resetAssetTxFilters()">Reset</button>
+                            <button class="btn-nb btn-nb-primary px-3 py-1.5 text-xs" onclick="applyAssetTxFilters()">Apply</button>
+                        </div>
+                    </div>
+                    <div id="asset-tx-selection-bar" class="hidden card-nb p-3 mb-3 border border-accent-yellow/40 bg-surface-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                        <span id="asset-tx-selection-info" class="text-gray-300"></span>
+                        <div class="flex items-center gap-2">
+                            <button class="btn-nb btn-nb-secondary px-3 py-1.5 text-xs" onclick="clearAssetTxSelection()">Clear Selection</button>
+                            <button class="btn-nb bg-red-500 text-white px-3 py-1.5 text-xs" onclick="bulkDeleteAssetTransactions()"><i class="fas fa-trash mr-1"></i>Delete Selected</button>
+                        </div>
+                    </div>
                     <div class="card-nb overflow-hidden">
                         <table class="table-nb w-full">
                             <thead>
                                 <tr>
+                                    <th class="w-10"><input type="checkbox" id="asset-tx-select-all" onchange="toggleSelectAllAssetTx(this.checked)"></th>
                                     <th class="text-left">Date</th>
                                     <th class="text-left">Asset</th>
                                     <th class="text-center">Type</th>
@@ -966,6 +1033,13 @@
                             </thead>
                             <tbody id="asset-transactions-table"></tbody>
                         </table>
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between border-t border-surface-300 px-4 py-3 text-xs gap-2">
+                            <span id="asset-transactions-page-info" class="text-gray-500">Page 1</span>
+                            <div class="flex items-center gap-2">
+                                <button id="asset-tx-prev" class="btn-nb btn-nb-secondary px-3 py-1" onclick="changeAssetTxPage(-1)">Prev</button>
+                                <button id="asset-tx-next" class="btn-nb btn-nb-secondary px-3 py-1" onclick="changeAssetTxPage(1)">Next</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -1000,6 +1074,141 @@
                         <div class="card-nb p-4">
                             <h3 class="text-sm font-semibold mb-3">Top Holdings by Value</h3>
                             <div id="top-holdings-list" class="space-y-2"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Wallets Sub-tab -->
+                <div id="asset-subtab-wallets" class="asset-subtab-content hidden">
+                    <div class="flex gap-2 mb-4 border-b border-surface-300 pb-2">
+                        <button id="wallet-view-overview-btn" class="wallet-view-tab wallet-view-active px-4 py-1.5 rounded" onclick="setWalletView('overview')">Overview</button>
+                        <button id="wallet-view-transactions-btn" class="wallet-view-tab px-4 py-1.5 rounded" onclick="setWalletView('transactions')">Transactions</button>
+                    </div>
+
+                    <div id="wallet-view-overview">
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                            <div class="card-nb p-4">
+                                <p class="text-xs text-gray-500 mb-1">Tracked Wallets</p>
+                                <p id="wallet-total-count" class="text-xl font-bold mono">0</p>
+                            </div>
+                            <div class="card-nb p-4">
+                                <p class="text-xs text-gray-500 mb-1">Networks</p>
+                                <p id="wallet-total-networks" class="text-xl font-bold mono">0</p>
+                            </div>
+                            <div class="card-nb p-4">
+                                <p class="text-xs text-gray-500 mb-1">Healthy Syncs</p>
+                                <p id="wallet-total-synced" class="text-xl font-bold mono text-green-400">0</p>
+                            </div>
+                            <div class="card-nb p-4">
+                                <p class="text-xs text-gray-500 mb-1">Last Sync</p>
+                                <p id="wallet-last-sync" class="text-xs text-gray-400">Never</p>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                            <div class="space-y-4">
+                                <div class="card-nb p-4">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <h3 class="text-sm font-semibold">Tracked Wallets</h3>
+                                        <button onclick="loadWallets(true)" class="btn-nb btn-nb-secondary px-2 py-1 text-xs">
+                                            <i class="fas fa-sync"></i>
+                                        </button>
+                                    </div>
+                                    <div id="wallets-list" class="space-y-3 text-sm"></div>
+                                </div>
+                                <div class="card-nb p-4">
+                                    <h3 class="text-sm font-semibold mb-3">Add Wallet</h3>
+                                    <form id="add-wallet-form" class="space-y-3">
+                                        <div>
+                                            <label for="wallet-address" class="text-xs text-gray-500 mb-1 block">Wallet Address</label>
+                                            <input id="wallet-address" type="text" class="input-nb w-full px-3 py-2 text-sm" placeholder="Enter BTC, EVM, or SOL address">
+                                            <p id="wallet-network-hint" class="text-[11px] text-gray-500 mt-1">Supports Bitcoin, all EVM chains, and Solana.</p>
+                                        </div>
+                                        <div>
+                                            <label for="wallet-label" class="text-xs text-gray-500 mb-1 block">Label (optional)</label>
+                                            <input id="wallet-label" type="text" class="input-nb w-full px-3 py-2 text-sm" placeholder="Family wallet, cold storage, etc.">
+                                        </div>
+                                        <div>
+                                            <label for="wallet-notes" class="text-xs text-gray-500 mb-1 block">Notes (optional)</label>
+                                            <textarea id="wallet-notes" class="input-nb w-full px-3 py-2 text-sm" rows="2" placeholder="Add reminders or purpose"></textarea>
+                                        </div>
+                                        <button id="add-wallet-submit" type="submit" class="btn-nb btn-nb-primary w-full py-2 text-sm flex items-center justify-center gap-2">
+                                            <i class="fas fa-wallet"></i>Track Wallet
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                            <div class="xl:col-span-2 space-y-4">
+                                <div class="card-nb p-4" id="wallet-detail-card">
+                                    <div id="wallet-detail-summary" class="text-sm text-gray-500">
+                                        Select a wallet from the list to see balances.
+                                    </div>
+                                    <div id="wallet-token-list" class="mt-4 space-y-2"></div>
+                                </div>
+                                <div class="card-nb p-4">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <h3 class="text-sm font-semibold">Balance Over Time</h3>
+                                        <div class="flex items-center gap-1 bg-surface-200 rounded-lg p-1">
+                                            <button onclick="setWalletHistoryRange('30')" id="wallet-range-30" class="wallet-history-range-btn px-3 py-1 text-xs rounded">1M</button>
+                                            <button onclick="setWalletHistoryRange('90')" id="wallet-range-90" class="wallet-history-range-btn wallet-history-active px-3 py-1 text-xs rounded">3M</button>
+                                            <button onclick="setWalletHistoryRange('180')" id="wallet-range-180" class="wallet-history-range-btn px-3 py-1 text-xs rounded">6M</button>
+                                            <button onclick="setWalletHistoryRange('365')" id="wallet-range-365" class="wallet-history-range-btn px-3 py-1 text-xs rounded">1Y</button>
+                                            <button onclick="setWalletHistoryRange('all')" id="wallet-range-all" class="wallet-history-range-btn px-3 py-1 text-xs rounded">All</button>
+                                        </div>
+                                    </div>
+                                    <div class="h-60" id="wallet-history-wrapper">
+                                        <p class="text-center text-gray-500 text-sm pt-8">Select a wallet to render history.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="wallet-view-transactions" class="hidden">
+                        <div class="card-nb p-4 mb-4">
+                            <div class="flex flex-col sm:flex-row sm:items-end gap-3">
+                                <div class="flex-1">
+                                    <label class="text-xs text-gray-500 mb-1 block">Wallet</label>
+                                    <select id="wallet-tx-filter" class="input-nb w-full px-3 py-2 text-sm" onchange="onWalletTxFilterChange(this.value)">
+                                        <option value="all">All wallets</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="text-xs text-gray-500 mb-1 block">Actions</label>
+                                    <button onclick="syncCurrentWalletFilter(this)" class="btn-nb btn-nb-secondary px-3 py-1.5 text-xs" id="wallet-filter-sync-btn">
+                                        <i class="fas fa-sync-alt"></i>Sync Selected
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-nb overflow-hidden">
+                            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 border-b border-surface-200">
+                                <div>
+                                    <h3 class="text-sm font-semibold">Transactions</h3>
+                                    <p id="wallet-sync-status" class="text-xs text-gray-500">Sync a wallet to pull its history.</p>
+                                </div>
+                            </div>
+                            <div class="overflow-x-auto">
+                                <table class="table-nb w-full min-w-[500px]">
+                                    <thead>
+                                        <tr>
+                                            <th>Date</th>
+                                            <th>Type</th>
+                                            <th>Amount</th>
+                                            <th>Counterparty</th>
+                                            <th>Hash</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="wallet-transactions-table"></tbody>
+                                </table>
+                            </div>
+                            <div class="flex flex-col sm:flex-row sm:items-center justify-between border-t border-surface-200 px-4 py-3 text-xs gap-2">
+                                <span id="wallet-transactions-page-info" class="text-gray-500">Page 1</span>
+                                <div class="flex items-center gap-2">
+                                    <button id="wallet-tx-prev" class="btn-nb btn-nb-secondary px-3 py-1" onclick="changeWalletTxPage(-1)">Prev</button>
+                                    <button id="wallet-tx-next" class="btn-nb btn-nb-secondary px-3 py-1" onclick="changeWalletTxPage(1)">Next</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1126,6 +1335,39 @@
                                 <i class="fas fa-user-plus"></i>Create User
                             </button>
                             <p class="text-xs text-gray-500">A dedicated offline database file is created for every user.</p>
+                        </form>
+                    </div>
+                    <div class="card-nb p-4">
+                        <h3 class="text-sm font-semibold mb-3">API Integrations</h3>
+                        <form id="admin-integrations-form" class="space-y-4">
+                            <div class="p-3 rounded-lg bg-surface-100 border border-surface-300">
+                                <div class="flex items-center justify-between mb-2">
+                                    <div>
+                                        <p class="font-semibold text-sm">Moralis (EVM Wallets)</p>
+                                        <p class="text-xs text-gray-500">Tracks Ethereum, Polygon, BSC, and other EVM chains.</p>
+                                    </div>
+                                    <label class="inline-flex items-center gap-2 text-xs">
+                                        <input type="checkbox" id="moralis-enabled" class="checkbox checkbox-sm"> Enable
+                                    </label>
+                                </div>
+                                <input type="text" id="moralis-api-key" class="input-nb w-full px-3 py-2 text-sm" placeholder="Paste Moralis API key">
+                            </div>
+                            <div class="p-3 rounded-lg bg-surface-100 border border-surface-300">
+                                <div class="flex items-center justify-between mb-2">
+                                    <div>
+                                        <p class="font-semibold text-sm">Helius (Solana Wallets)</p>
+                                        <p class="text-xs text-gray-500">Tracks Solana wallet balances and transactions.</p>
+                                    </div>
+                                    <label class="inline-flex items-center gap-2 text-xs">
+                                        <input type="checkbox" id="helius-enabled" class="checkbox checkbox-sm"> Enable
+                                    </label>
+                                </div>
+                                <input type="text" id="helius-api-key" class="input-nb w-full px-3 py-2 text-sm" placeholder="Paste Helius API key">
+                            </div>
+                            <div id="admin-integrations-status" class="hidden text-xs"></div>
+                            <button type="submit" class="btn-nb btn-nb-primary w-full py-2 text-sm flex items-center justify-center gap-2">
+                                <i class="fas fa-save"></i>Save Keys
+                            </button>
                         </form>
                     </div>
                     <div class="card-nb p-4 border border-red-500/40">

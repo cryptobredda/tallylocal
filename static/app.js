@@ -16,9 +16,25 @@ let dashboardPeriod = 'mtd';  // Default: Month to date
 let dashboardStartDate = null;
 let dashboardEndDate = null;
 let activeTransactionId = null;
+let activeWalletId = null;
 let currentUser = null;
 let isAuthenticated = false;
 let appBootstrapped = false;
+let walletsData = [];
+let walletBalanceChart = null;
+let walletHistoryRange = '90';
+let walletTxPagination = { page: 1, total_pages: 1, per_page: 25, total: 0 };
+let walletSummaryData = { wallets: [], total_value: 0 };
+let walletOverviewFilter = 'all';
+let latestPortfolioSummary = null;
+let assetTransactionsAll = [];
+let filteredAssetTransactions = [];
+let assetTxSelection = new Set();
+let assetTxFilters = { assetId: 'all', type: 'all', search: '', startDate: '', endDate: '' };
+let assetTxPage = 1;
+let assetTxPerPage = 25;
+let walletTransactionsFilter = 'all';
+let walletViewState = 'overview';
 
 const originalFetch = window.fetch.bind(window);
 window.fetch = async (...args) => {
@@ -34,6 +50,7 @@ let needsInitialSetup = false;
 
 document.addEventListener('DOMContentLoaded', () => {
     bindAuthForms();
+    bindWalletUI();
     initApp();
 });
 
@@ -104,6 +121,23 @@ function bindAuthForms() {
     const adminResetForm = document.getElementById('admin-reset-form');
     if (adminResetForm) {
         adminResetForm.addEventListener('submit', resetEntireApp);
+    }
+    const integrationsForm = document.getElementById('admin-integrations-form');
+    if (integrationsForm) {
+        integrationsForm.addEventListener('submit', saveIntegrationSettings);
+    }
+}
+
+function bindWalletUI() {
+    const form = document.getElementById('add-wallet-form');
+    if (form) {
+        form.addEventListener('submit', addWallet);
+    }
+    const addressInput = document.getElementById('wallet-address');
+    if (addressInput) {
+        addressInput.addEventListener('input', () => {
+            updateWalletNetworkHint(addressInput.value);
+        });
     }
 }
 
@@ -258,14 +292,25 @@ function resetAppState() {
     allTransactions = [];
     filteredTransactions = [];
     selectedTransactions = new Set();
+    assetTxSelection = new Set();
     currentPage = 1;
     perPage = 15;
     sortColumn = 'date';
     sortDirection = 'desc';
     activeTransactionId = null;
+    activeWalletId = null;
+    walletsData = [];
+    assetTransactionsAll = [];
+    filteredAssetTransactions = [];
     dashboardPeriod = 'mtd';
     dashboardStartDate = null;
     dashboardEndDate = null;
+    walletTxPagination = { page: 1, total_pages: 1, per_page: 25, total: 0 };
+    walletSummaryData = { wallets: [], total_value: 0 };
+    walletOverviewFilter = 'all';
+    latestPortfolioSummary = null;
+    assetTxFilters = { assetId: 'all', type: 'all', search: '', startDate: '', endDate: '' };
+    assetTxPage = 1;
 
     if (categoryChart) {
         categoryChart.destroy();
@@ -274,6 +319,10 @@ function resetAppState() {
     if (cashflowChart) {
         cashflowChart.destroy();
         cashflowChart = null;
+    }
+    if (walletBalanceChart) {
+        walletBalanceChart.destroy();
+        walletBalanceChart = null;
     }
 
     [
@@ -309,6 +358,19 @@ function resetAppState() {
         if (el) el.innerHTML = '';
     });
 
+    const walletList = document.getElementById('wallets-list');
+    if (walletList) walletList.innerHTML = '';
+    const walletDetail = document.getElementById('wallet-detail-summary');
+    if (walletDetail) walletDetail.textContent = 'Select a wallet from the list to see balances.';
+    const walletTokens = document.getElementById('wallet-token-list');
+    if (walletTokens) walletTokens.innerHTML = '';
+    const walletTxTable = document.getElementById('wallet-transactions-table');
+    if (walletTxTable) walletTxTable.innerHTML = '';
+    const walletHistoryWrapper = document.getElementById('wallet-history-wrapper');
+    if (walletHistoryWrapper) walletHistoryWrapper.innerHTML = '<p class="text-center text-gray-500 text-sm pt-8">Select a wallet to render history.</p>';
+    const walletSyncStatus = document.getElementById('wallet-sync-status');
+    if (walletSyncStatus) walletSyncStatus.textContent = 'Sync a wallet to pull its history.';
+
     const summaryEl = document.getElementById('selection-summary');
     if (summaryEl) summaryEl.classList.add('hidden');
 
@@ -329,9 +391,11 @@ async function loadAdminDashboard() {
         if (!res.ok) throw new Error('Failed to load users');
         const data = await res.json();
         renderAdminUsers(data.users || []);
+        setAdminError('');
     } catch (e) {
         setAdminError(e.message);
     }
+    loadIntegrationSettings();
 }
 
 function renderAdminUsers(users) {
@@ -368,6 +432,76 @@ function setAdminError(msg) {
         el.textContent = msg;
         el.classList.toggle('hidden', !msg);
     }
+}
+
+async function loadIntegrationSettings() {
+    if (!currentUser?.is_admin) return;
+    const form = document.getElementById('admin-integrations-form');
+    if (!form) return;
+    try {
+        const res = await fetch(`${API}/admin/integrations`);
+        if (!res.ok) throw new Error('Failed to load integrations');
+        const data = await res.json();
+        const wallets = data.wallets || {};
+        document.getElementById('moralis-enabled').checked = !!wallets.moralis?.enabled;
+        document.getElementById('moralis-api-key').value = wallets.moralis?.api_key || '';
+        document.getElementById('helius-enabled').checked = !!wallets.helius?.enabled;
+        document.getElementById('helius-api-key').value = wallets.helius?.api_key || '';
+        setIntegrationStatus('');
+    } catch (e) {
+        setIntegrationStatus(e.message, true);
+    }
+}
+
+async function saveIntegrationSettings(event) {
+    event.preventDefault();
+    if (!currentUser?.is_admin) return;
+    const submitBtn = event.target.querySelector('button[type="submit"]');
+    const payload = {
+        wallets: {
+            moralis: {
+                enabled: document.getElementById('moralis-enabled').checked,
+                api_key: document.getElementById('moralis-api-key').value.trim()
+            },
+            helius: {
+                enabled: document.getElementById('helius-enabled').checked,
+                api_key: document.getElementById('helius-api-key').value.trim()
+            }
+        }
+    };
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Saving...';
+    }
+    try {
+        const res = await fetch(`${API}/admin/integrations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to save integrations');
+        setIntegrationStatus('API keys saved');
+    } catch (e) {
+        setIntegrationStatus(e.message, true);
+    } finally {
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="fas fa-save"></i>Save Keys';
+        }
+    }
+}
+
+function setIntegrationStatus(message, isError = false) {
+    const el = document.getElementById('admin-integrations-status');
+    if (!el) return;
+    if (!message) {
+        el.classList.add('hidden');
+        return;
+    }
+    el.classList.remove('hidden');
+    el.textContent = message;
+    el.className = `text-xs ${isError ? 'text-red-400' : 'text-green-400'}`;
 }
 
 async function createAdminUser(event) {
@@ -2899,33 +3033,35 @@ async function loadAssets() {
             await fetch(`${API}/assets/prices/refresh`, { method: 'POST' });
         }
         
-        const [assetsRes, summaryRes, metricsRes, allocationRes] = await Promise.all([
+        const [assetsRes, summaryRes, metricsRes, allocationRes, walletSummaryRes] = await Promise.all([
             fetch(`${API}/assets`),
             fetch(`${API}/assets/portfolio/summary`),
             fetch(`${API}/assets/portfolio/metrics`),
-            fetch(`${API}/assets/portfolio/allocation`)
+            fetch(`${API}/assets/portfolio/allocation`),
+            fetch(`${API}/wallets/summary`)
         ]);
         
         const assets = await assetsRes.json();
         const summary = await summaryRes.json();
         const metrics = await metricsRes.json();
         const allocation = await allocationRes.json();
+        walletSummaryData = walletSummaryRes.ok ? await walletSummaryRes.json() : { wallets: [], total_value: 0 };
         
         assetsData = assets.assets || [];
         
         // Update overview
-        updatePortfolioOverview(summary, metrics);
-        updateAllocationChart(allocation.allocation || []);
+        updatePortfolioOverview(summary, metrics, walletSummaryData);
+        updateAllocationChart(allocation.allocation || [], walletSummaryData);
         updatePerformers(summary);
         
         // Update holdings table
-        renderHoldingsTable(assetsData);
+        renderHoldingsTable(assetsData, walletSummaryData);
         
         // Load transactions
         loadAssetTransactions();
         
         // Update analytics
-        updateAssetAnalytics(summary, allocation.allocation || []);
+        updateAssetAnalytics(summary, allocation.allocation || [], walletSummaryData);
         
         // Load portfolio history for chart
         loadPortfolioHistory();
@@ -3099,8 +3235,11 @@ async function recalculatePortfolio() {
     }
 }
 
-function updatePortfolioOverview(summary, metrics) {
-    document.getElementById('portfolio-total-value').textContent = formatCurrency(summary.total_value || 0);
+function updatePortfolioOverview(summary, metrics, walletSummary) {
+    latestPortfolioSummary = { summary, metrics, walletSummary };
+    updateWalletFilterOptions(walletSummary);
+    renderPortfolioTotals();
+    
     document.getElementById('portfolio-cost-basis').textContent = formatCurrency(summary.total_cost_basis || 0);
     
     const gainLoss = summary.total_gain_loss || 0;
@@ -3121,24 +3260,84 @@ function updatePortfolioOverview(summary, metrics) {
     document.getElementById('metric-holdings-count').textContent = summary.holdings_count || 0;
 }
 
-function updateAllocationChart(allocation) {
+function renderPortfolioTotals() {
+    if (!latestPortfolioSummary) return;
+    const summary = latestPortfolioSummary.summary;
+    const walletSummary = latestPortfolioSummary.walletSummary || { total_value: 0, wallets: [] };
+    const assetValue = summary.asset_value ?? summary.total_value ?? 0;
+    let walletValue = walletSummary.total_value || 0;
+    if (walletOverviewFilter !== 'all') {
+        const wallet = walletSummary.wallets?.find(w => String(w.id) === walletOverviewFilter);
+        walletValue = wallet ? wallet.value_gbp || 0 : 0;
+    }
+    const combined = assetValue + walletValue;
+    const totalEl = document.getElementById('portfolio-total-value');
+    if (totalEl) totalEl.textContent = formatCurrency(combined);
+    const breakdownEl = document.getElementById('portfolio-total-breakdown');
+    if (breakdownEl) breakdownEl.textContent = `Assets ${formatCurrency(assetValue)} + Wallets ${formatCurrency(walletValue)}`;
+    const assetEl = document.getElementById('portfolio-asset-value');
+    if (assetEl) assetEl.textContent = formatCurrency(assetValue);
+    const walletEl = document.getElementById('portfolio-wallet-value');
+    if (walletEl) walletEl.textContent = formatCurrency(walletValue);
+}
+
+function updateWalletFilterOptions(walletSummary = { wallets: [] }) {
+    const select = document.getElementById('wallet-total-filter');
+    if (!select) return;
+    const prev = walletOverviewFilter;
+    select.innerHTML = '';
+    const allOption = document.createElement('option');
+    allOption.value = 'all';
+    allOption.textContent = 'All Wallets';
+    select.appendChild(allOption);
+    (walletSummary.wallets || []).forEach(w => {
+        const opt = document.createElement('option');
+        opt.value = String(w.id);
+        opt.textContent = w.label || `Wallet ${w.id}`;
+        select.appendChild(opt);
+    });
+    if ([...select.options].some(opt => opt.value === prev)) {
+        select.value = prev;
+        walletOverviewFilter = prev;
+    } else {
+        walletOverviewFilter = 'all';
+    }
+}
+
+function setWalletOverviewFilter(value) {
+    walletOverviewFilter = value || 'all';
+    renderPortfolioTotals();
+}
+
+function updateAllocationChart(allocation, walletSummary = { wallets: [] }) {
     const ctx = document.getElementById('portfolio-allocation-chart');
     if (!ctx) return;
     
     if (portfolioAllocationChart) portfolioAllocationChart.destroy();
-    
-    if (!allocation.length) {
+    const walletEntries = (walletSummary.wallets || []).filter(w => (w.value_gbp || 0) > 0).map(w => ({
+        symbol: w.label || `Wallet ${w.id}`,
+        value: w.value_gbp || 0,
+        percentage: null,
+        color: w.network === 'btc' ? '#f7931a' : w.network === 'sol' ? '#00ffa3' : '#06b6d4'
+    }));
+    const merged = [...allocation, ...walletEntries];
+    const totalValue = merged.reduce((sum, entry) => sum + (entry.value || 0), 0);
+
+    if (!merged.length || totalValue === 0) {
         ctx.parentElement.innerHTML = '<p class="text-gray-500 text-sm text-center py-8">No holdings yet</p>';
         return;
     }
+    merged.forEach(entry => {
+        entry.percentage = totalValue > 0 ? ((entry.value / totalValue) * 100).toFixed(1) : 0;
+    });
     
     portfolioAllocationChart = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: allocation.map(a => `${a.symbol} (${a.percentage}%)`),
+            labels: merged.map(a => `${a.symbol} (${a.percentage}%)`),
             datasets: [{
-                data: allocation.map(a => a.value),
-                backgroundColor: allocation.map(a => a.color),
+                data: merged.map(a => a.value),
+                backgroundColor: merged.map(a => a.color || '#3b82f6'),
                 borderWidth: 0
             }]
         },
@@ -3192,15 +3391,12 @@ function updatePerformers(summary) {
     }
 }
 
-function renderHoldingsTable(assets) {
+function renderHoldingsTable(assets, walletSummary = { wallets: [] }) {
     const tbody = document.getElementById('holdings-table');
-    
-    if (!assets.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-500">No assets yet. Click "Add Asset" to get started.</td></tr>';
-        return;
-    }
-    
-    tbody.innerHTML = assets.map(a => {
+    const rows = [];
+
+    if (assets.length) {
+        rows.push(...assets.map(a => {
         const gainColor = a.gain_loss >= 0 ? 'green' : 'red';
         const changeColor = (a.change_24h || 0) >= 0 ? 'green' : 'red';
         return `
@@ -3237,26 +3433,138 @@ function renderHoldingsTable(assets) {
                 </td>
             </tr>
         `;
-    }).join('');
+        }));
+    }
+
+    const walletRows = (walletSummary.wallets || []).map(w => {
+        const color = '#06b6d4';
+        const symbol = (w.label || `Wallet ${w.id}`).slice(0, 3).toUpperCase();
+        return `
+            <tr>
+                <td>
+                    <div class="flex items-center gap-2">
+                        <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold" style="background:${color}20;color:${color}">${symbol}</div>
+                        <div>
+                            <p class="font-medium">${w.label || `Wallet ${w.id}`}</p>
+                            <p class="text-xs text-gray-500 uppercase">${w.network}</p>
+                        </div>
+                    </div>
+                </td>
+                <td class="text-right mono">${formatWalletBalance(w.native_balance || 0, w.native_symbol)}</td>
+                <td class="text-right mono hidden sm:table-cell">—</td>
+                <td class="text-right">—</td>
+                <td class="text-right mono hidden sm:table-cell">${formatCurrency(w.value_gbp || 0)}</td>
+                <td class="text-right">
+                    <p class="mono text-gray-400">—</p>
+                    <p class="text-xs text-gray-500">Wallet</p>
+                </td>
+                <td>
+                    <div class="flex justify-end">
+                        <button class="btn-nb btn-nb-secondary px-2 py-1 text-xs" onclick="setActiveWallet(${w.id}); setWalletView('overview');">View</button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    });
+
+    if (!rows.length && !walletRows.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-500">No assets yet. Click "Add Asset" to get started.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = rows.join('') + walletRows.join('');
 }
 
 async function loadAssetTransactions() {
     try {
-        const res = await fetch(`${API}/assets/transactions?limit=50`);
+        const res = await fetch(`${API}/assets/transactions?limit=1000`);
         const data = await res.json();
-        
-        const tbody = document.getElementById('asset-transactions-table');
-        const transactions = data.transactions || [];
-        
-        if (!transactions.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-500">No transactions yet.</td></tr>';
-            return;
-        }
-        
-        tbody.innerHTML = transactions.map(t => {
+        assetTransactionsAll = data.transactions || [];
+        populateAssetFilterOptions();
+        assetTxSelection.clear();
+        applyAssetTxFilters(true);
+    } catch (e) {
+        console.error('Failed to load asset transactions:', e);
+    }
+}
+
+function populateAssetFilterOptions() {
+    const select = document.getElementById('asset-tx-asset');
+    if (!select) return;
+    const assets = Array.from(new Map(assetTransactionsAll.map(tx => [tx.asset_id, tx.asset_symbol + '|' + tx.asset_name])).entries());
+    const options = ['<option value="all">All assets</option>'];
+    assets.forEach(([id, label]) => {
+        const [symbol, name] = label.split('|');
+        options.push(`<option value="${id}">${symbol} - ${name || ''}</option>`);
+    });
+    select.innerHTML = options.join('');
+}
+
+function applyAssetTxFilters(initial = false) {
+    const searchInput = document.getElementById('asset-tx-search');
+    const assetSelect = document.getElementById('asset-tx-asset');
+    const typeSelect = document.getElementById('asset-tx-type');
+    const startInput = document.getElementById('asset-tx-start');
+    const endInput = document.getElementById('asset-tx-end');
+    assetTxFilters = {
+        search: searchInput?.value.trim().toLowerCase() || '',
+        assetId: assetSelect?.value || 'all',
+        type: typeSelect?.value || 'all',
+        startDate: startInput?.value || '',
+        endDate: endInput?.value || ''
+    };
+    assetTxPage = 1;
+    if (!initial) assetTxSelection.clear();
+    filteredAssetTransactions = assetTransactionsAll.filter(matchesAssetTxFilters);
+    renderAssetTransactionsTable();
+}
+
+function matchesAssetTxFilters(tx) {
+    if (assetTxFilters.assetId !== 'all' && String(tx.asset_id) !== assetTxFilters.assetId) return false;
+    if (assetTxFilters.type !== 'all' && tx.type !== assetTxFilters.type) return false;
+    if (assetTxFilters.search) {
+        const haystack = `${tx.asset_symbol} ${tx.asset_name} ${tx.notes || ''}`.toLowerCase();
+        if (!haystack.includes(assetTxFilters.search)) return false;
+    }
+    const txDate = new Date(tx.date);
+    if (assetTxFilters.startDate) {
+        const from = new Date(assetTxFilters.startDate);
+        if (txDate < from) return false;
+    }
+    if (assetTxFilters.endDate) {
+        const to = new Date(assetTxFilters.endDate);
+        to.setHours(23, 59, 59, 999);
+        if (txDate > to) return false;
+    }
+    return true;
+}
+
+function resetAssetTxFilters() {
+    document.getElementById('asset-tx-search').value = '';
+    document.getElementById('asset-tx-asset').value = 'all';
+    document.getElementById('asset-tx-type').value = 'all';
+    document.getElementById('asset-tx-start').value = '';
+    document.getElementById('asset-tx-end').value = '';
+    applyAssetTxFilters();
+}
+
+function renderAssetTransactionsTable() {
+    const tbody = document.getElementById('asset-transactions-table');
+    if (!tbody) return;
+    const total = filteredAssetTransactions.length;
+    const totalPages = Math.max(1, Math.ceil(total / assetTxPerPage));
+    assetTxPage = Math.min(assetTxPage, totalPages);
+    const start = (assetTxPage - 1) * assetTxPerPage;
+    const rows = filteredAssetTransactions.slice(start, start + assetTxPerPage);
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center py-8 text-gray-500">No transactions match your filters.</td></tr>';
+    } else {
+        tbody.innerHTML = rows.map(t => {
             const typeColor = t.type === 'buy' ? 'green' : t.type === 'sell' ? 'red' : 'blue';
+            const checked = assetTxSelection.has(t.id) ? 'checked' : '';
             return `
                 <tr>
+                    <td><input type="checkbox" ${checked} onchange="toggleAssetTxSelection(${t.id}, this.checked)"></td>
                     <td class="mono text-gray-400">${new Date(t.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })}</td>
                     <td>
                         <span class="font-medium">${t.asset_symbol}</span>
@@ -3276,15 +3584,101 @@ async function loadAssetTransactions() {
                 </tr>
             `;
         }).join('');
+    }
+    const selectAll = document.getElementById('asset-tx-select-all');
+    if (selectAll) {
+        const allSelected = rows.length > 0 && rows.every(tx => assetTxSelection.has(tx.id));
+        const someSelected = rows.some(tx => assetTxSelection.has(tx.id));
+        selectAll.checked = allSelected;
+        selectAll.indeterminate = !allSelected && someSelected;
+    }
+    updateAssetTransactionsPagination(total, totalPages);
+    updateAssetSelectionBar();
+}
+
+function updateAssetTransactionsPagination(total, totalPages) {
+    const info = document.getElementById('asset-transactions-page-info');
+    if (info) {
+        info.textContent = `Page ${assetTxPage} of ${totalPages} • ${total} transactions`;
+    }
+    const prevBtn = document.getElementById('asset-tx-prev');
+    const nextBtn = document.getElementById('asset-tx-next');
+    if (prevBtn) prevBtn.disabled = assetTxPage <= 1;
+    if (nextBtn) nextBtn.disabled = assetTxPage >= totalPages;
+}
+
+function changeAssetTxPage(delta) {
+    const totalPages = Math.max(1, Math.ceil(filteredAssetTransactions.length / assetTxPerPage));
+    const next = Math.min(Math.max(1, assetTxPage + delta), totalPages);
+    if (next === assetTxPage) return;
+    assetTxPage = next;
+    renderAssetTransactionsTable();
+}
+
+function toggleAssetTxSelection(id, checked) {
+    if (checked) {
+        assetTxSelection.add(id);
+    } else {
+        assetTxSelection.delete(id);
+    }
+    updateAssetSelectionBar();
+}
+
+function toggleSelectAllAssetTx(checked) {
+    const start = (assetTxPage - 1) * assetTxPerPage;
+    const rows = filteredAssetTransactions.slice(start, start + assetTxPerPage);
+    rows.forEach(tx => {
+        if (checked) {
+            assetTxSelection.add(tx.id);
+        } else {
+            assetTxSelection.delete(tx.id);
+        }
+    });
+    renderAssetTransactionsTable();
+}
+
+function clearAssetTxSelection() {
+    assetTxSelection.clear();
+    renderAssetTransactionsTable();
+}
+
+function updateAssetSelectionBar() {
+    const bar = document.getElementById('asset-tx-selection-bar');
+    const info = document.getElementById('asset-tx-selection-info');
+    if (!bar || !info) return;
+    const count = assetTxSelection.size;
+    if (!count) {
+        bar.classList.add('hidden');
+        return;
+    }
+    bar.classList.remove('hidden');
+    info.textContent = `${count} transaction${count === 1 ? '' : 's'} selected`;
+}
+
+async function bulkDeleteAssetTransactions() {
+    if (!assetTxSelection.size) return;
+    if (!confirm(`Delete ${assetTxSelection.size} selected transaction(s)?`)) return;
+    try {
+        for (const id of Array.from(assetTxSelection)) {
+            await fetch(`${API}/assets/transactions/${id}`, { method: 'DELETE' });
+        }
+        assetTxSelection.clear();
+        await loadAssets();
     } catch (e) {
-        console.error('Failed to load asset transactions:', e);
+        alert('Failed to delete selected transactions: ' + e.message);
     }
 }
 
-function updateAssetAnalytics(summary, allocation) {
+function updateAssetAnalytics(summary, allocation, walletSummary = { wallets: [], total_value: 0 }) {
     // By type
     const byTypeContainer = document.getElementById('allocation-by-type');
     const byType = summary.by_type || {};
+    if ((walletSummary.total_value || 0) > 0) {
+        byType.wallet = {
+            value: walletSummary.total_value,
+            count: (walletSummary.wallets || []).length
+        };
+    }
     
     if (Object.keys(byType).length === 0) {
         byTypeContainer.innerHTML = '<p class="text-gray-500 text-sm">No data</p>';
@@ -3304,7 +3698,14 @@ function updateAssetAnalytics(summary, allocation) {
     
     // Top holdings
     const topContainer = document.getElementById('top-holdings-list');
-    const sortedHoldings = [...allocation].sort((a, b) => b.value - a.value).slice(0, 5);
+    const walletEntries = (walletSummary.wallets || []).map(w => ({
+        symbol: w.label || `Wallet ${w.id}`,
+        value: w.value_gbp || 0,
+        percentage: null
+    }));
+    const mergedHoldings = [...allocation, ...walletEntries];
+    const totalValue = mergedHoldings.reduce((sum, h) => sum + (h.value || 0), 0);
+    const sortedHoldings = mergedHoldings.sort((a, b) => (b.value || 0) - (a.value || 0)).slice(0, 5);
     
     if (!sortedHoldings.length) {
         topContainer.innerHTML = '<p class="text-gray-500 text-sm">No data</p>';
@@ -3315,7 +3716,7 @@ function updateAssetAnalytics(summary, allocation) {
                     <span class="w-5 h-5 rounded bg-surface-300 flex items-center justify-center text-xs text-gray-400">${i + 1}</span>
                     <span class="text-sm font-medium">${h.symbol}</span>
                 </div>
-                <span class="mono text-sm">${formatCurrency(h.value)} <span class="text-gray-500">(${h.percentage}%)</span></span>
+                <span class="mono text-sm">${formatCurrency(h.value || 0)} <span class="text-gray-500">(${totalValue > 0 ? ((h.value || 0) / totalValue * 100).toFixed(1) : 0}%)</span></span>
             </div>
         `).join('');
     }
@@ -3327,12 +3728,58 @@ function formatAssetQuantity(qty) {
     return qty.toFixed(8);
 }
 
+function formatRelativeTime(dateStr) {
+    if (!dateStr) return 'Never';
+    const target = new Date(dateStr);
+    const diffMs = Date.now() - target.getTime();
+    const diffMinutes = Math.floor(diffMs / 60000);
+    if (diffMinutes < 1) return 'just now';
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays < 30) return `${diffDays}d ago`;
+    const diffMonths = Math.floor(diffDays / 30);
+    if (diffMonths < 12) return `${diffMonths}mo ago`;
+    const diffYears = Math.floor(diffMonths / 12);
+    return `${diffYears}y ago`;
+}
+
+function shortenAddress(value, visible = 4) {
+    if (!value) return '—';
+    const str = value.trim();
+    if (str.length <= visible * 2 + 4) return str;
+    return `${str.slice(0, visible + 2)}…${str.slice(-visible)}`;
+}
+
+function shortenHash(value, visible = 6) {
+    if (!value) return '—';
+    const str = value.trim();
+    if (str.length <= visible * 2 + 4) return str;
+    return `${str.slice(0, visible + 2)}…${str.slice(-visible)}`;
+}
+
 function setAssetSubTab(tab) {
     document.querySelectorAll('.asset-subtab').forEach(el => el.classList.remove('asset-subtab-active'));
     document.querySelectorAll('.asset-subtab-content').forEach(el => el.classList.add('hidden'));
     
     document.getElementById(`asset-tab-${tab}`)?.classList.add('asset-subtab-active');
     document.getElementById(`asset-subtab-${tab}`)?.classList.remove('hidden');
+
+    if (tab === 'wallets') {
+        loadWallets(!activeWalletId);
+    }
+}
+
+function setWalletView(view) {
+    walletViewState = view;
+    document.querySelectorAll('.wallet-view-tab').forEach(btn => btn.classList.remove('wallet-view-active'));
+    document.getElementById(`wallet-view-${view}-btn`)?.classList.add('wallet-view-active');
+    document.getElementById('wallet-view-overview')?.classList.toggle('hidden', view !== 'overview');
+    document.getElementById('wallet-view-transactions')?.classList.toggle('hidden', view !== 'transactions');
+    if (view === 'transactions') {
+        loadWalletTransactions(walletTransactionsFilter, walletTxPagination.page || 1);
+    }
 }
 
 async function loadSupportedAssets() {
@@ -3535,4 +3982,486 @@ async function refreshAssetPrices() {
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-sync-alt mr-1"></i>Refresh Prices';
     }
+}
+
+// ======================== WALLET TRACKER ========================
+
+async function addWallet(event) {
+    event.preventDefault();
+    const addressInput = document.getElementById('wallet-address');
+    const labelInput = document.getElementById('wallet-label');
+    const notesInput = document.getElementById('wallet-notes');
+    const submitBtn = document.getElementById('add-wallet-submit');
+    
+    if (!addressInput || !submitBtn) return;
+    const address = addressInput.value.trim();
+    const label = labelInput?.value.trim();
+    const notes = notesInput?.value.trim();
+    
+    if (!address) {
+        alert('Enter a wallet address');
+        return;
+    }
+    
+    const original = submitBtn.innerHTML;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Saving...';
+    
+    try {
+        const res = await fetch(`${API}/wallets`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ address, label, notes })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Failed to add wallet');
+        document.getElementById('add-wallet-form')?.reset();
+        updateWalletNetworkHint('');
+        await loadWallets(true);
+    } catch (e) {
+        alert(e.message);
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = original;
+    }
+}
+
+function detectWalletNetwork(address) {
+    if (!address) return null;
+    const value = address.trim();
+    if (/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}$/.test(value)) return 'Bitcoin';
+    if (/^0x[a-fA-F0-9]{40}$/.test(value)) return 'EVM';
+    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)) return 'Solana';
+    return null;
+}
+
+function updateWalletNetworkHint(address) {
+    const hint = document.getElementById('wallet-network-hint');
+    if (!hint) return;
+    if (!address) {
+        hint.textContent = 'Supports Bitcoin, all EVM chains, and Solana.';
+        return;
+    }
+    const detected = detectWalletNetwork(address);
+    if (detected) {
+        hint.textContent = `Detected network: ${detected}`;
+    } else {
+        hint.textContent = 'Unable to detect network yet.';
+    }
+}
+
+async function loadWallets(forceSelectFirst = false) {
+    const listContainer = document.getElementById('wallets-list');
+    if (!listContainer) return;
+    if (!isAuthenticated) return;
+    try {
+        const res = await fetch(`${API}/wallets`);
+        if (!res.ok) throw new Error('Failed to load wallets');
+        const data = await res.json();
+        walletsData = data.wallets || [];
+        renderWalletList(walletsData);
+        updateWalletTotals(data.totals || {});
+        updateWalletTransactionFilterOptions();
+        if (!walletsData.length) {
+            activeWalletId = null;
+            renderWalletDetail(null);
+            renderWalletHistoryChart([]);
+            return;
+        }
+        const shouldSelectFirst = forceSelectFirst || !walletsData.some(w => w.id === activeWalletId);
+        const targetId = shouldSelectFirst ? walletsData[0].id : activeWalletId;
+        setActiveWallet(targetId);
+    } catch (e) {
+        listContainer.innerHTML = `<p class="text-sm text-red-400">${e.message}</p>`;
+    }
+}
+
+function renderWalletList(wallets) {
+    const container = document.getElementById('wallets-list');
+    if (!container) return;
+    if (!wallets.length) {
+        container.innerHTML = '<p class="text-sm text-gray-500">No wallets yet. Add one to begin tracking.</p>';
+        return;
+    }
+    container.innerHTML = wallets.map(wallet => {
+        const active = wallet.id === activeWalletId;
+        const status = wallet.last_sync_status === 'ok'
+            ? `<span class="text-green-400 text-[11px]">${wallet.last_synced_at ? formatRelativeTime(wallet.last_synced_at) : 'Synced'}</span>`
+            : wallet.last_sync_status === 'error'
+                ? `<span class="text-red-400 text-[11px]">Sync error</span>`
+                : `<span class="text-xs text-gray-500">Not synced</span>`;
+        return `
+            <div class="border rounded-lg ${active ? 'border-accent-yellow bg-surface-200' : 'border-surface-200'} p-3">
+                <button class="w-full text-left" onclick="setActiveWallet(${wallet.id})">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <p class="font-semibold">${wallet.label || 'Wallet #' + wallet.id}</p>
+                            <p class="text-[11px] text-gray-500 mono break-all">${wallet.address}</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-sm font-semibold mono">${formatWalletBalance(wallet.native_balance, wallet.native_symbol)}</p>
+                            ${status}
+                        </div>
+                    </div>
+                </button>
+                <div class="flex items-center gap-2 mt-3">
+                    <button class="btn-nb btn-nb-secondary text-xs px-2 py-1 flex-1" onclick="syncWallet(${wallet.id}, this)">Sync</button>
+                    <button class="btn-nb bg-red-500/20 text-red-400 text-xs px-2 py-1" onclick="deleteWallet(${wallet.id})">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function formatWalletBalance(amount, symbol = '') {
+    if (amount === null || amount === undefined) return '-';
+    const value = Math.abs(amount) >= 1 ? amount.toFixed(4) : amount.toFixed(8);
+    return `${value} ${symbol}`.trim();
+}
+
+function updateWalletTransactionFilterOptions() {
+    const select = document.getElementById('wallet-tx-filter');
+    if (!select) return;
+    const current = walletTransactionsFilter;
+    select.innerHTML = '';
+    const allOption = document.createElement('option');
+    allOption.value = 'all';
+    allOption.textContent = 'All wallets';
+    select.appendChild(allOption);
+    walletsData.forEach(wallet => {
+        const option = document.createElement('option');
+        option.value = String(wallet.id);
+        option.textContent = wallet.label || `Wallet ${wallet.id}`;
+        select.appendChild(option);
+    });
+    if ([...select.options].some(opt => opt.value === current)) {
+        select.value = current;
+    } else {
+        select.value = 'all';
+        walletTransactionsFilter = 'all';
+    }
+}
+
+function setActiveWallet(walletId) {
+    const wallet = walletsData.find(w => w.id === walletId);
+    activeWalletId = wallet ? wallet.id : null;
+    walletTxPagination.page = 1;
+    walletTxPagination.total_pages = 1;
+    renderWalletList(walletsData);
+    renderWalletDetail(wallet || null);
+    if (activeWalletId) {
+        loadWalletHistory(activeWalletId);
+    } else {
+        renderWalletHistoryChart([]);
+    }
+}
+
+function renderWalletDetail(wallet) {
+    const summary = document.getElementById('wallet-detail-summary');
+    const tokensContainer = document.getElementById('wallet-token-list');
+    const syncStatus = document.getElementById('wallet-sync-status');
+    if (!summary || !tokensContainer) return;
+    if (!wallet) {
+        summary.innerHTML = 'Select a wallet from the list to see balances.';
+        tokensContainer.innerHTML = '';
+        if (syncStatus) syncStatus.textContent = 'Sync a wallet to pull its history.';
+        return;
+    }
+    const lastSync = wallet.last_synced_at ? new Date(wallet.last_synced_at).toLocaleString() : 'Never';
+    const statusText = wallet.last_sync_status === 'ok'
+        ? `Last synced ${formatRelativeTime(wallet.last_synced_at)}`
+        : wallet.last_sync_error
+            ? `Last sync failed: ${wallet.last_sync_error}`
+            : 'Never synced';
+    summary.innerHTML = `
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div>
+                <p class="text-xs text-gray-500 uppercase">Wallet</p>
+                <p class="text-lg font-semibold">${wallet.label || 'Tracked Wallet'} <span class="text-[11px] text-gray-500 uppercase">(${wallet.network})</span></p>
+                <p class="text-xs text-gray-500 mono break-all">${wallet.address}</p>
+            </div>
+            <div class="text-right">
+                <p class="text-xs text-gray-500">Native Balance</p>
+                <p class="text-2xl font-bold mono">${formatWalletBalance(wallet.native_balance, wallet.native_symbol)}</p>
+                <p class="text-xs text-gray-500">${statusText}</p>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4 text-sm">
+            <div class="p-3 rounded-lg bg-surface-100 border border-surface-300">
+                <p class="text-xs text-gray-500">Transactions cached</p>
+                <p class="font-semibold mono">${wallet.transactions_count}</p>
+            </div>
+            <div class="p-3 rounded-lg bg-surface-100 border border-surface-300">
+                <p class="text-xs text-gray-500">Last sync</p>
+                <p class="font-semibold mono">${lastSync}</p>
+            </div>
+            <div class="p-3 rounded-lg bg-surface-100 border border-surface-300">
+                <p class="text-xs text-gray-500">Notes</p>
+                <p class="text-xs text-gray-400">${wallet.notes || '—'}</p>
+            </div>
+        </div>
+    `;
+    renderWalletTokens(wallet.token_balances || []);
+    if (syncStatus) syncStatus.textContent = statusText;
+}
+
+function renderWalletTokens(tokens) {
+    const container = document.getElementById('wallet-token-list');
+    if (!container) return;
+    if (!tokens.length) {
+        container.innerHTML = '<p class="text-xs text-gray-500">No token balances reported yet.</p>';
+        return;
+    }
+    container.innerHTML = `
+        <p class="text-xs text-gray-500 uppercase">Token balances</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+            ${tokens.slice(0, 6).map(token => `
+                <div class="flex items-center justify-between p-2 rounded bg-surface-100 border border-surface-200 text-sm">
+                    <span class="font-semibold">${token.symbol || token.name || 'Token'}</span>
+                    <span class="mono">${(token.amount ?? 0).toLocaleString(undefined, { maximumFractionDigits: 8 })}</span>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function updateWalletTotals(totals) {
+    const countEl = document.getElementById('wallet-total-count');
+    if (countEl) countEl.textContent = totals.count ?? 0;
+    const networks = Object.keys(totals.by_network || {}).length;
+    const netEl = document.getElementById('wallet-total-networks');
+    if (netEl) netEl.textContent = networks;
+    const syncedEl = document.getElementById('wallet-total-synced');
+    if (syncedEl) syncedEl.textContent = totals.synced ?? 0;
+    const lastEl = document.getElementById('wallet-last-sync');
+    if (lastEl) lastEl.textContent = totals.last_sync ? formatRelativeTime(totals.last_sync) : 'Never';
+}
+
+async function syncWallet(walletId, button = null) {
+    if (!walletId) {
+        alert('Select a wallet first');
+        return;
+    }
+    let original = '';
+    if (button) {
+        button.disabled = true;
+        original = button.innerHTML;
+        button.innerHTML = '<i class="fas fa-sync-alt fa-spin mr-1"></i>Syncing...';
+    }
+    try {
+        const res = await fetch(`${API}/wallets/${walletId}/sync`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Failed to sync wallet');
+        await loadWallets(false);
+        setActiveWallet(walletId);
+    } catch (e) {
+        alert(e.message);
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = original || button.dataset?.label || 'Sync';
+        }
+    }
+}
+
+async function deleteWallet(walletId) {
+    if (!confirm('Delete this wallet and its cached history?')) return;
+    try {
+        const res = await fetch(`${API}/wallets/${walletId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Failed to delete wallet');
+        await loadWallets(true);
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
+
+async function loadWalletTransactions(filterValue = walletTransactionsFilter, page = 1) {
+    const tbody = document.getElementById('wallet-transactions-table');
+    if (!tbody) return;
+    walletTransactionsFilter = filterValue || 'all';
+    if (walletTransactionsFilter === 'all' && !walletsData.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-500 py-6">Add a wallet to see transactions.</td></tr>';
+        updateWalletTxPaginationControls();
+        return;
+    }
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-500 py-6">Loading...</td></tr>';
+    try {
+        const perPage = walletTxPagination.per_page || 25;
+        const params = new URLSearchParams({ page, per_page: perPage });
+        if (walletTransactionsFilter !== 'all') {
+            params.set('wallet_id', walletTransactionsFilter);
+        }
+        const res = await fetch(`${API}/wallets/transactions?${params.toString()}`);
+        const data = await res.json();
+        walletTxPagination = data.pagination || { page: 1, total_pages: 1, per_page: perPage, total: 0 };
+        const txs = data.transactions || [];
+        renderWalletTransactions(txs);
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-red-400 py-6">${e.message}</td></tr>`;
+    }
+}
+
+function renderWalletTransactions(transactions) {
+    const tbody = document.getElementById('wallet-transactions-table');
+    if (!tbody) return;
+    if (!transactions || !transactions.length) {
+        const msg = walletTransactionsFilter === 'all'
+            ? 'No transactions cached yet.'
+            : 'No transactions for this wallet.';
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-gray-500 py-6">${msg}</td></tr>`;
+        updateWalletTxPaginationControls();
+        return;
+    }
+    tbody.innerHTML = transactions.map(tx => {
+        const direction = tx.type || 'other';
+        const pillColor = direction === 'receive'
+            ? 'bg-green-500/20 text-green-300'
+            : direction === 'send'
+                ? 'bg-red-500/20 text-red-300'
+                : 'bg-surface-200 text-gray-300';
+        const txDate = tx.timestamp ? new Date(tx.timestamp).toLocaleString() : '-';
+        const fromLabel = shortenAddress(tx.from_address);
+        const toLabel = shortenAddress(tx.to_address);
+        const hashLabel = shortenHash(tx.hash);
+        return `
+            <tr>
+                <td class="mono text-xs text-gray-400">${txDate}</td>
+                <td><span class="px-2 py-0.5 rounded text-xs ${pillColor} uppercase">${direction}</span></td>
+                <td class="mono font-semibold">${formatWalletBalance(tx.amount, tx.native_symbol)}</td>
+                <td class="text-xs">
+                    <div class="mono truncate max-w-[220px] overflow-hidden whitespace-nowrap" title="${tx.from_address || '—'}"><span class="text-gray-500">From:</span> ${fromLabel}</div>
+                    <div class="mono truncate max-w-[220px] overflow-hidden whitespace-nowrap" title="${tx.to_address || '—'}"><span class="text-gray-500">To:</span> ${toLabel}</div>
+                </td>
+                <td class="text-xs mono truncate max-w-[220px] overflow-hidden whitespace-nowrap">
+                    ${tx.explorer_url ? `<a href="${tx.explorer_url}" target="_blank" rel="noreferrer" class="text-blue-400 hover:text-blue-300" title="${tx.hash}">${hashLabel}</a>` : (hashLabel || '—')}
+                </td>
+            </tr>
+        `;
+    }).join('');
+    updateWalletTxPaginationControls();
+}
+
+function updateWalletTxPaginationControls() {
+    const info = document.getElementById('wallet-transactions-page-info');
+    if (!info) return;
+    const page = walletTxPagination.page || 1;
+    const totalPages = walletTxPagination.total_pages || 1;
+    const total = walletTxPagination.total || 0;
+    info.textContent = `Page ${page} of ${totalPages} • ${total} transactions`;
+    const prevBtn = document.getElementById('wallet-tx-prev');
+    const nextBtn = document.getElementById('wallet-tx-next');
+    if (prevBtn) prevBtn.disabled = page <= 1;
+    if (nextBtn) nextBtn.disabled = page >= totalPages;
+}
+
+function changeWalletTxPage(delta) {
+    if (walletTransactionsFilter === 'all' && !walletsData.length) return;
+    const next = Math.min(Math.max(1, (walletTxPagination.page || 1) + delta), walletTxPagination.total_pages || 1);
+    if (next === walletTxPagination.page) return;
+    loadWalletTransactions(walletTransactionsFilter, next);
+}
+
+function onWalletTxFilterChange(value) {
+    walletTransactionsFilter = value || 'all';
+    walletTxPagination.page = 1;
+    if (walletViewState === 'transactions') {
+        loadWalletTransactions(walletTransactionsFilter, 1);
+    }
+}
+
+function syncCurrentWalletFilter(button) {
+    const targetId = walletTransactionsFilter === 'all' ? activeWalletId : parseInt(walletTransactionsFilter, 10);
+    if (!targetId) {
+        alert('Select a wallet to sync.');
+        return;
+    }
+    syncWallet(targetId, button);
+}
+
+async function loadWalletHistory(walletId) {
+    const wrapper = document.getElementById('wallet-history-wrapper');
+    if (!wrapper) return;
+    if (!walletId) {
+        renderWalletHistoryChart([]);
+        return;
+    }
+    wrapper.innerHTML = '<p class="text-center text-gray-500 text-sm pt-8">Loading history...</p>';
+    try {
+        const range = walletHistoryRange === 'all' ? 'all' : walletHistoryRange;
+        const res = await fetch(`${API}/wallets/${walletId}/history?days=${range}`);
+        const data = await res.json();
+        renderWalletHistoryChart(data.history || []);
+    } catch (e) {
+        wrapper.innerHTML = `<p class="text-center text-red-400 text-sm pt-8">${e.message}</p>`;
+    }
+}
+
+function setWalletHistoryRange(range) {
+    walletHistoryRange = range;
+    document.querySelectorAll('.wallet-history-range-btn').forEach(btn => btn.classList.remove('wallet-history-active'));
+    document.getElementById(`wallet-range-${range}`)?.classList.add('wallet-history-active');
+    if (activeWalletId) {
+        loadWalletHistory(activeWalletId);
+    }
+}
+
+function renderWalletHistoryChart(history) {
+    const wrapper = document.getElementById('wallet-history-wrapper');
+    if (!wrapper) return;
+    if (walletBalanceChart) {
+        walletBalanceChart.destroy();
+        walletBalanceChart = null;
+    }
+    if (!history || !history.length) {
+        wrapper.innerHTML = '<p class="text-center text-gray-500 text-sm pt-8">No history yet. Sync wallet to build a timeline.</p>';
+        return;
+    }
+    wrapper.innerHTML = '<canvas id="wallet-history-chart"></canvas>';
+    const ctx = document.getElementById('wallet-history-chart');
+    const activeWallet = walletsData.find(w => w.id === activeWalletId) || {};
+    walletBalanceChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: history.map(point => new Date(point.timestamp).toLocaleDateString()),
+            datasets: [{
+                label: 'Balance',
+                data: history.map(point => point.balance),
+                borderColor: '#06b6d4',
+                backgroundColor: 'rgba(6, 182, 212, 0.15)',
+                fill: true,
+                tension: 0.2,
+                borderWidth: 2,
+                pointRadius: history.length > 50 ? 0 : 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: context => `${formatWalletBalance(context.parsed.y, activeWallet.native_symbol || '')}`
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#999', maxRotation: 0 },
+                    grid: { color: '#2a2a38' }
+                },
+                y: {
+                    ticks: {
+                        color: '#999',
+                        callback: value => value.toLocaleString()
+                    },
+                    grid: { color: '#2a2a38' }
+                }
+            }
+        }
+    });
 }

@@ -29,6 +29,8 @@ from app.ocr_service import ocr_service, transaction_parser, HSBCStatementParser
 from app.categorization_service import categorization_service
 from app.account_service import account_service
 from app.analytics_service import analytics_service
+from app.wallet_service import wallet_service
+from app.integration_service import get_wallet_integrations, update_wallet_integrations
 
 # Backward compatibility
 pot_service = account_service
@@ -273,6 +275,18 @@ def admin_reset_app():
         return jsonify({'status': 'reset'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/integrations', methods=['GET', 'POST'])
+def admin_integrations():
+    if not require_admin():
+        return jsonify({'error': 'Forbidden'}), 403
+    if request.method == 'GET':
+        return jsonify({'wallets': get_wallet_integrations()})
+    data = request.json or {}
+    payload = data.get('wallets') if isinstance(data.get('wallets'), dict) else data
+    updated = update_wallet_integrations(payload)
+    return jsonify({'wallets': updated})
 
 
 @api_bp.route('/status', methods=['GET'])
@@ -2545,3 +2559,87 @@ def recalculate_portfolio():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# ======================== WALLET TRACKER ========================
+
+@api_bp.route('/wallets', methods=['GET'])
+def list_wallets():
+    wallet_service.sync_due_wallets(1)
+    return jsonify(wallet_service.list_wallets())
+
+
+@api_bp.route('/wallets', methods=['POST'])
+def create_wallet_endpoint():
+    data = request.json or {}
+    result = wallet_service.create_wallet(
+        address=data.get('address'),
+        label=data.get('label'),
+        notes=data.get('notes')
+    )
+    status = 200 if 'wallet' in result else 400
+    return jsonify(result), status
+
+
+@api_bp.route('/wallets/<int:wallet_id>', methods=['DELETE'])
+def delete_wallet_endpoint(wallet_id: int):
+    result = wallet_service.delete_wallet(wallet_id)
+    status = 200 if result.get('status') == 'ok' else 404
+    return jsonify(result), status
+
+
+@api_bp.route('/wallets/<int:wallet_id>/sync', methods=['POST'])
+def sync_wallet_endpoint(wallet_id: int):
+    result = wallet_service.sync_wallet(wallet_id)
+    status = 200 if 'wallet' in result else 400
+    return jsonify(result), status
+
+
+@api_bp.route('/wallets/<int:wallet_id>/transactions', methods=['GET'])
+def wallet_transactions_endpoint(wallet_id: int):
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 25, type=int)
+    result = wallet_service.get_wallet_transactions(wallet_id, page, per_page)
+    return jsonify(result)
+
+
+@api_bp.route('/wallets/transactions', methods=['GET'])
+def wallet_transactions_all_endpoint():
+    wallet_id = request.args.get('wallet_id', type=int)
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 25, type=int)
+    result = wallet_service.get_wallet_transactions(wallet_id, page, per_page)
+    return jsonify(result)
+
+
+@api_bp.route('/wallets/<int:wallet_id>/history', methods=['GET'])
+def wallet_history_endpoint(wallet_id: int):
+    days_param = request.args.get('days')
+    if days_param is None:
+        days = 180
+    elif days_param == '' or days_param.lower() == 'all':
+        days = None
+    else:
+        try:
+            days = int(days_param)
+        except (TypeError, ValueError):
+            days = 90
+    history = wallet_service.get_wallet_history(wallet_id, days)
+    return jsonify({'history': history})
+
+
+@api_bp.route('/wallets/summary', methods=['GET'])
+def wallet_summary_endpoint():
+    wallet_service.sync_due_wallets(1)
+    return jsonify(wallet_service.get_value_summary())
+
+
+@api_bp.route('/wallets/sync/due', methods=['POST'])
+def wallet_sync_due_endpoint():
+    max_wallets = request.json.get('max') if request.is_json else None
+    try:
+        max_wallets = int(max_wallets)
+    except (TypeError, ValueError):
+        max_wallets = 2
+    result = wallet_service.sync_due_wallets(max_wallets)
+    return jsonify(result)

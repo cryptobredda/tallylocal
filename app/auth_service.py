@@ -8,12 +8,14 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from app.database import DB_PATH
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-AUTH_DB_PATH = os.path.join(APP_DIR, 'users.db')
-USER_DATA_DIR = os.path.join(APP_DIR, 'user_data')
+DATA_ROOT = os.getenv('DATA_DIR', APP_DIR)
+AUTH_DB_PATH = os.getenv('USERS_DB_PATH', os.path.join(DATA_ROOT, 'users.db'))
+USER_DATA_DIR = os.getenv('USER_DATA_DIR', os.path.join(DATA_ROOT, 'user_data'))
 
 os.makedirs(USER_DATA_DIR, exist_ok=True)
 
 AuthBase = declarative_base()
+os.makedirs(os.path.dirname(AUTH_DB_PATH), exist_ok=True)
 auth_engine = create_engine(f'sqlite:///{AUTH_DB_PATH}', connect_args={'check_same_thread': False})
 AuthSession = sessionmaker(bind=auth_engine, expire_on_commit=False)
 

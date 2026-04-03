@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text, Enum as SQLEnum, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -22,6 +22,19 @@ class AssetTransactionType(enum.Enum):
     BUY = "buy"
     SELL = "sell"
     TRANSFER = "transfer"
+    OTHER = "other"
+
+
+class WalletNetwork(enum.Enum):
+    BTC = "btc"
+    EVM = "evm"
+    SOL = "sol"
+
+
+class WalletTransactionType(enum.Enum):
+    SEND = "send"
+    RECEIVE = "receive"
+    INTERNAL = "internal"
     OTHER = "other"
 
 
@@ -294,3 +307,73 @@ class PortfolioSnapshot(Base):
     holdings_breakdown = Column(Text)  # JSON string of {asset_id: {quantity, value}}
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Wallet(Base):
+    """User-tracked blockchain wallet"""
+    __tablename__ = 'wallets'
+    
+    id = Column(Integer, primary_key=True)
+    label = Column(String(120))
+    address = Column(String(120), nullable=False, unique=True)
+    network = Column(SQLEnum(WalletNetwork), nullable=False)
+    native_symbol = Column(String(10))
+    notes = Column(Text)
+    native_balance = Column(Float, default=0.0)
+    total_value_usd = Column(Float)
+    token_balances = Column(Text, default='[]')  # JSON array of balances
+    last_synced_at = Column(DateTime)
+    last_sync_status = Column(String(20), default='never')
+    last_sync_error = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    transactions = relationship('WalletTransaction', back_populates='wallet', cascade='all, delete-orphan')
+    snapshots = relationship('WalletBalanceSnapshot', back_populates='wallet', cascade='all, delete-orphan')
+
+
+class WalletTransaction(Base):
+    """Normalized on-chain transaction attached to a tracked wallet"""
+    __tablename__ = 'wallet_transactions'
+    __table_args__ = (
+        UniqueConstraint('wallet_id', 'tx_hash', name='uq_wallet_tx_hash'),
+    )
+    
+    id = Column(Integer, primary_key=True)
+    wallet_id = Column(Integer, ForeignKey('wallets.id'), nullable=False)
+    tx_hash = Column(String(130), nullable=False)
+    timestamp = Column(DateTime, nullable=False)
+    chain = Column(String(50))
+    tx_type = Column(SQLEnum(WalletTransactionType), default=WalletTransactionType.OTHER)
+    amount_native = Column(Float, default=0.0)  # Absolute value
+    net_amount_native = Column(Float, default=0.0)  # Signed (+in, -out)
+    native_symbol = Column(String(10))
+    token_symbol = Column(String(20))
+    amount_usd = Column(Float)
+    from_address = Column(String(120))
+    to_address = Column(String(120))
+    description = Column(Text)
+    explorer_url = Column(String(255))
+    fee_native = Column(Float)
+    metadata_json = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    wallet = relationship('Wallet', back_populates='transactions')
+
+
+class WalletBalanceSnapshot(Base):
+    """Historical snapshot of wallet balance for charting"""
+    __tablename__ = 'wallet_balance_snapshots'
+    __table_args__ = (
+        UniqueConstraint('wallet_id', 'snapshot_time', name='uq_wallet_snapshot'),
+    )
+    
+    id = Column(Integer, primary_key=True)
+    wallet_id = Column(Integer, ForeignKey('wallets.id'), nullable=False)
+    snapshot_time = Column(DateTime, nullable=False)
+    balance_native = Column(Float, default=0.0)
+    balance_usd = Column(Float)
+    token_breakdown = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    wallet = relationship('Wallet', back_populates='snapshots')

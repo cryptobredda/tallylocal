@@ -6,7 +6,9 @@ from sqlalchemy.ext.declarative import declarative_base
 
 # Paths
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(APP_DIR, 'finance_tracker.db')
+DATA_ROOT = os.getenv('DATA_DIR', APP_DIR)
+os.makedirs(DATA_ROOT, exist_ok=True)
+DB_PATH = os.path.join(DATA_ROOT, 'finance_tracker.db')
 
 # Engine/session caches keyed by db path
 _engine_cache = {}

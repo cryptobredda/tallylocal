@@ -1,24 +1,19 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Code that powers Tally Local lives under `app/`: service modules handle OCR (`ocr_service.py`), categorization, analytics, and asset pricing, while `routes.py` wires Flask blueprints and `database.py` exposes the SQLAlchemy session/engine. Static UI artifacts (Tailwind + Chart.js bundle) sit in `static/` and are served directly from Flask; leave marketing captures in `screenshots/`. User-provided bank statements land in `uploads/` and the working SQLite file (`finance_tracker.db`) and JSON backups remain at the repo root—treat them as local fixtures and do not commit regenerated copies.
+Core Flask code sits in `app/`: `__init__.py` wires blueprints, `routes.py` exposes REST handlers, and service modules (`wallet_service.py`, `integration_service.py`, `asset_service.py`, OCR helpers) encapsulate business logic plus API clients. Models live in `models.py`, DB helpers in `database.py`, and the Tailwind/Chart.js SPA lives under `static/`. Treat `finance_tracker.db`, `users.db`, `uploads/`, `user_data/`, and backup JSON files as local state—inspect them while debugging but do not commit regenerated copies. Docker assets (`Dockerfile`, `docker-compose.yml`, `.dockerignore`) remain at the repo root next to `requirements.txt`.
 
 ## Build, Test, and Development Commands
-Create a fresh environment before hacking:
-```bash
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-```
-Run the server with `python run.py` (serves on `http://localhost:5000`). Populate or migrate legacy data via `python migrate_to_accounts.py`.
+Create a venv (`python -m venv venv && source venv/bin/activate`), install deps via `pip install -r requirements.txt`, then run `python run.py` to serve the API + SPA on `http://localhost:5000`. Use `python migrate_to_accounts.py` when promoting legacy installs to the multi-user schema. Container users rely on `docker compose up --build`; the compose file mounts named volumes so SQLite files and uploads persist through rebuilds.
 
 ## Coding Style & Naming Conventions
-Follow PEP 8 with 4-space indentation and keep imports grouped stdlib/third-party/local as in `routes.py`. Service classes and SQLAlchemy models are `PascalCase`, helper functions stay `snake_case`, and API routes prefer descriptive verbs (`/upload`, `/reset`). Add type hints for public functions, concise docstrings for new services, and keep JSON payload keys consistent with existing camelCase usage on the frontend. No formatter is enforced, but `black` (line length 88) is recommended.
+Stick to PEP 8 (4-space indents, grouped imports) and keep functions tight. Services/models stay `PascalCase`; helpers, REST handlers, and DOM IDs remain `snake_case`/kebab-case; JSON payloads must follow the existing camelCase API schema. Keep wallet logic in `wallet_service.py` and integration settings in `integration_service.py`, document new helpers with a one-line docstring, and reuse the existing formatting utilities in `static/app.js` instead of custom number formatting.
 
 ## Testing Guidelines
-There is no automated suite yet, so prioritize PyTest modules placed under a future `tests/` folder. Name files `test_<module>.py`, seed fixtures with `finance_test_data.json`, and mock OCR/price calls so tests stay offline. Until coverage gates exist, run targeted smoke tests with `pytest tests -k upload` plus manual browser checks for affected pages; document any required DB migrations in the PR description.
+PyTest is the preferred harness (`pytest tests -k wallet`). Mirror the package layout (`tests/test_wallet_service.py`, `tests/test_routes.py`), seed fixtures from `finance_test_data.json`, and stub network clients (Clearbit, Coingecko, Moralis, Helius) so the suite can run offline. Until broader coverage lands, include manual QA steps—multi-account login, wallet sync, asset filters—in each PR.
 
 ## Commit & Pull Request Guidelines
-Git history favors short imperative subjects (e.g., `license update`, `ready for public`); follow that style and include a detailed body when schema or UI changes occur. PRs should describe motivation, outline schema impacts, list manual test steps, and attach updated screenshots when the UI changes. Reference related issues, call out any new environment variables, and confirm that generated assets, uploads, and private databases are excluded from the diff.
+Use short imperative subjects (`add wallet pagination`, `fix docker db path`) and include bodies whenever schemas, admin flows, or Docker settings move. PRs should outline scope, schema impacts, new settings/env vars, manual tests, and screenshots for UI changes (wallet tab, analytics panels, admin dashboard). Double-check that regenerated DBs/uploads stay untracked before requesting review.
 
-## Data Handling & Security Tips
-Never upload real statements or personal SQLite files to shared branches—use redacted fixtures in `uploads/` for reproductions and scrub logs before sharing. If you add new integrations (APIs, OCR models), gate secrets through environment variables loaded by `python-dotenv` and document defaults inside `.env.example` rather than hardcoding them.
+## Security & Configuration Tips
+Manage Moralis, Helius, and OCR keys through the admin integrations panel—never hardcode them or commit `.env` snapshots. Redact personal statements, exports, and SQLite files when sharing branches. Destructive admin actions (user deletion, full reset) must go through the service helpers so permission checks remain centralized; note these flows explicitly in PRs.

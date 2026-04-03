@@ -10,11 +10,12 @@ from app.auth_service import (
 
 def create_app():
     app = Flask(__name__, static_folder='../static', static_url_path='')
-    app.config['SECRET_KEY'] = 'your-secret-key-change-in-production'
+    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-only-fallback')
     
     # Set upload folder to absolute path
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    app.config['UPLOAD_FOLDER'] = os.path.join(base_dir, 'uploads')
+    upload_root = os.getenv('UPLOADS_DIR', os.path.join(os.getenv('DATA_DIR', base_dir), 'uploads'))
+    app.config['UPLOAD_FOLDER'] = upload_root
     app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max upload
     
     # Ensure upload folder exists

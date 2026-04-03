@@ -1,0 +1,26 @@
+version: '3.9'
+
+services:
+  finance:
+    build: .
+    container_name: finance-ai
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - SECRET_KEY=${SECRET_KEY:-changeme-generate-with-openssl-rand-hex-32}
+      - DATA_DIR=/data
+      - USERS_DB_PATH=/data/users.db
+      - USER_DATA_DIR=/data/user_data
+      - UPLOADS_DIR=/data/uploads
+    volumes:
+      - finance_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  finance_data:

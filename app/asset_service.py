@@ -416,8 +416,14 @@ class AssetService:
                 reverse=True
             )
             
+            from app.wallet_service import wallet_service
+            wallet_summary = wallet_service.get_value_summary()
+            wallet_value = wallet_summary.get('total_value', 0) if wallet_summary else 0
             return {
                 'total_value': round(total_value, 2),
+                'asset_value': round(total_value, 2),
+                'wallet_value': round(wallet_value, 2),
+                'combined_value': round(total_value + wallet_value, 2),
                 'total_cost_basis': round(total_cost_basis, 2),
                 'total_gain_loss': round(total_gain_loss, 2),
                 'total_gain_loss_pct': round(total_gain_loss_pct, 2),
@@ -426,7 +432,8 @@ class AssetService:
                 'by_type': by_type,
                 'best_performer': performers[0] if performers else None,
                 'worst_performer': performers[-1] if performers else None,
-                'holdings': assets
+                'holdings': assets,
+                'wallet_breakdown': wallet_summary.get('wallets', []) if wallet_summary else []
             }
         finally:
             session.close()

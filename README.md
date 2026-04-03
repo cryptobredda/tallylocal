@@ -53,6 +53,8 @@ In a world where every finance app wants to connect to your bank, sell your data
 |---------|-------------|
 | **Cryptocurrency Tracking** | Support for 90+ cryptocurrencies with live CoinGecko pricing |
 | **Precious Metals** | Track Gold (XAU), Silver (XAG), Platinum (XPT), and Palladium (XPD) |
+| **Wallet Tracking** | Monitor Bitcoin, EVM (Ethereum, Polygon, BSC, etc.), and Solana wallets with historical balances |
+| **Auto Wallet Sync** | Wallet balances auto-refresh daily (with manual sync controls when you need them) |
 | **Portfolio Analytics** | ROI calculations, gain/loss tracking, and performance metrics |
 | **Historical Charts** | Daily portfolio value charts with customizable date ranges (7D, 1M, 3M, 6M, 1Y, All) |
 | **Transaction History** | Complete buy/sell/transfer records with cost basis tracking |
@@ -87,7 +89,7 @@ In a world where every finance app wants to connect to your bank, sell your data
 - Python 3.8 - 3.12 (required for PaddleOCR compatibility)
 - pip (Python package manager)
 
-### Installation
+### Installation (Local)
 
 ```bash
 # Clone the repository
@@ -101,6 +103,29 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 ```
+
+### Run with Docker
+
+Build the image and start the container (exposes the app on port 5000):
+
+```bash
+docker compose up --build
+```
+
+This compose file keeps your data in named Docker volumes so user accounts, uploads, and local databases survive container restarts. If you prefer plain Docker commands:
+
+```bash
+docker build -t finance-ai .
+docker run --rm -p 5000:5000 \
+  -e DATA_DIR=/data \
+  -e USERS_DB_PATH=/data/users.db \
+  -e USER_DATA_DIR=/data/user_data \
+  -e UPLOADS_DIR=/data/uploads \
+  -v finance_data:/data \
+  finance-ai
+```
+
+> **Note:** The first time you run inside Docker you still need to create the initial admin account via the setup screen.
 
 ### PaddleOCR Setup (Required for Bank Statement Import)
 
@@ -147,6 +172,17 @@ python run.py
 ```
 
 Open your browser and navigate to `http://localhost:5000`
+
+---
+
+### 🔑 Wallet Tracker API Keys
+
+Wallet syncing talks to public blockchain APIs. Bitcoin wallets use Blockchain.com without credentials, but EVM and Solana require free API keys:
+
+- Moralis (EVM chains – Ethereum, Polygon, BSC…). Create a key at [moralis.com](https://moralis.com/).
+- Helius (Solana). Create a key at [helius.dev](https://dashboard.helius.dev/).
+
+Add these keys inside the app: sign in as an admin, open the **Admin** tab, and use the **API Integrations** card to paste your keys and toggle each provider on. Keys are stored locally in `integrations.json` under your `DATA_DIR` and never leave your machine. Once saved, head to **Assets → Wallets** and click **Sync** on a wallet to fetch balances and history.
 
 ---
 
