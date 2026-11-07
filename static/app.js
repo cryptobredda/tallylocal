@@ -641,6 +641,7 @@ function showTab(tabName) {
     }
     
     if (tabName === 'dashboard') loadDashboard();
+    if (tabName === 'pages') loadPages();
     if (tabName === 'transactions') loadTransactions();
     if (tabName === 'pots') loadPots();
     if (tabName === 'analytics') loadAnalytics();
@@ -4464,4 +4465,399 @@ function renderWalletHistoryChart(history) {
             }
         }
     });
+}
+
+/* ===================== Agent-built pages ===================== */
+let activePageSlug = null;
+const pageCharts = {};
+
+const PAGE_PALETTE = ['#facc15', '#22c55e', '#3b82f6', '#ec4899', '#a855f7',
+                      '#f97316', '#14b8a6', '#ef4444', '#94a3b8', '#eab308'];
+
+function pageEscape(value) {
+    return String(value === null || value === undefined ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function pageMoney(value, currency) {
+    if (value === null || value === undefined || isNaN(Number(value))) return '—';
+    const symbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '£';
+    return symbol + Number(value).toLocaleString('en-GB',
+        { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function loadPages() {
+    const nav = document.getElementById('pages-nav');
+    const content = document.getElementById('pages-content');
+    if (!nav || !content) return;
+    try {
+        const res = await fetch('/api/v1/pages');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const pages = data.pages || [];
+        if (!pages.length) {
+            nav.innerHTML = '';
+            content.innerHTML = '<div class="card-nb p-6 text-sm text-gray-400">' +
+                'No pages yet. Ask your agent: <em>"create a page called Goals with a goal tracker and a budget board"</em>,' +
+                ' or run <code>tally pages create --name Goals</code>.</div>';
+            return;
+        }
+        nav.innerHTML = pages.map(function (p) {
+            const active = p.slug === activePageSlug ? ' btn-nb-primary' : '';
+            return '<button class="btn-nb px-3 py-1.5 text-xs' + active + '" onclick="openPage(\'' +
+                pageEscape(p.slug) + '\')">' + pageEscape(p.name) + '</button>';
+        }).join('');
+        await openPage(activePageSlug || pages[0].slug, false);
+    } catch (err) {
+        content.innerHTML = '<div class="card-nb p-4 text-sm text-red-400">Could not load pages: ' +
+            pageEscape(err.message) + '</div>';
+    }
+}
+
+async function openPage(slug, refreshNav) {
+    activePageSlug = slug;
+    const content = document.getElementById('pages-content');
+    content.innerHTML = '<div class="text-sm text-gray-500">Loading…</div>';
+    try {
+        const res = await fetch('/api/v1/pages/' + encodeURIComponent(slug));
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const page = await res.json();
+        if (refreshNav !== false) {
+            document.querySelectorAll('#pages-nav button').forEach(function (b) {
+                b.classList.remove('btn-nb-primary');
+            });
+        }
+        renderPageWidgets(page);
+    } catch (err) {
+        content.innerHTML = '<div class="card-nb p-4 text-sm text-red-400">Could not load page: ' +
+            pageEscape(err.message) + '</div>';
+    }
+}
+
+function renderPageWidgets(page) {
+    const content = document.getElementById('pages-content');
+    Object.keys(pageCharts).forEach(function (id) {
+        try { pageCharts[id].destroy(); } catch (e) {}
+        delete pageCharts[id];
+    });
+
+    if (!page.widgets || !page.widgets.length) {
+        content.innerHTML = '<div class="card-nb p-6 text-sm text-gray-400">This page is empty. ' +
+            'Ask your agent to add widgets.</div>';
+        return;
+    }
+
+    let html = '<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">';
+    page.widgets.forEach(function (widget) {
+        const span = widget.type === 'chart' || widget.type === 'list' ? 'lg:col-span-2' : '';
+        html += '<div class="card-nb p-4 ' + span + '">' + widgetBody(widget) + '</div>';
+    });
+    html += '</div>';
+    content.innerHTML = html;
+
+    page.widgets.filter(function (w) { return w.type === 'chart'; }).forEach(function (widget) {
+        drawPageChart('page-chart-' + widget.id, widget);
+    });
+}
+
+function widgetHeader(widget) {
+    return '<div class="flex items-center justify-between mb-3">' +
+        '<h3 class="text-sm font-semibold">' + pageEscape(widget.title) + '</h3>' +
+        '<span class="text-[10px] uppercase tracking-wide text-gray-600">' +
+        pageEscape(widget.type) + '</span></div>';
+}
+
+function widgetBody(widget) {
+    const data = widget.data;
+    if (widget.type === 'metric') {
+        const value = data && data.value !== undefined ? data.value : null;
+        const isMoney = widget.config && widget.config.metric !== 'transactions';
+        return widgetHeader(widget) +
+            '<div class="text-2xl font-bold text-accent-yellow">' +
+            (isMoney ? pageMoney(value) : (value === null ? '—' : value)) + '</div>' +
+            '<div class="text-xs text-gray-500 mt-1">' + pageEscape((widget.config || {}).period || '') + '</div>';
+    }
+    if (widget.type === 'chart') {
+        return widgetHeader(widget) +
+            '<div class="h-48"><canvas id="page-chart-' + widget.id + '"></canvas></div>';
+    }
+    if (widget.type === 'list') {
+        return widgetHeader(widget) + listBody(data);
+    }
+    if (widget.type === 'budget') {
+        return widgetHeader(widget) + budgetBody(data, widget.id);
+    }
+    if (widget.type === 'goal') {
+        return widgetHeader(widget) + goalBody(data, widget.id);
+    }
+    if (widget.type === 'progress') {
+        return widgetHeader(widget) + goalBody(data ? [data] : [], widget.id, false);
+    }
+    if (widget.type === 'text') {
+        return widgetHeader(widget) +
+            '<div class="text-sm text-gray-300 whitespace-pre-wrap">' +
+            pageEscape((data && data.markdown) || '') + '</div>';
+    }
+    return widgetHeader(widget) + '<div class="text-xs text-gray-500">Unsupported widget</div>';
+}
+
+function listBody(items) {
+    if (!Array.isArray(items) || !items.length) {
+        return '<div class="text-xs text-gray-500">Nothing to show yet.</div>';
+    }
+    return '<div class="space-y-2">' + items.slice(0, 10).map(function (item) {
+        const title = item.description || item.name || item.merchant || item.category ||
+                      item.source || item.key || '';
+        let value = '';
+        if (item.amount !== undefined && item.amount !== null) value = pageMoney(item.amount);
+        else if (item.total !== undefined && item.total !== null) value = pageMoney(item.total);
+        const sub = item.date ? String(item.date).slice(0, 10) : (item.count ? item.count + ' txns' : '');
+        return '<div class="flex items-center justify-between gap-3 text-sm">' +
+            '<div class="min-w-0"><div class="truncate">' + pageEscape(title) + '</div>' +
+            (sub ? '<div class="text-[11px] text-gray-500">' + pageEscape(sub) + '</div>' : '') +
+            '</div><div class="font-mono text-xs">' + pageEscape(value) + '</div></div>';
+    }).join('') + '</div>';
+}
+
+function budgetBody(items, widgetId) {
+    const formHost = 'budget-form-' + widgetId;
+    let html = '<div class="flex justify-end mb-2">' +
+        '<button class="btn-nb px-2 py-1 text-[11px]" onclick="budgetNewForm(' + widgetId + ')">Set budget</button>' +
+        '</div><div id="' + formHost + '"></div>';
+    if (!Array.isArray(items) || !items.length) {
+        return html + '<div class="text-xs text-gray-500">No budgets set.</div>';
+    }
+    html += '<div class="space-y-3">' + items.map(function (b) {
+        const pct = Math.max(0, Math.min(100, Number(b.percent_used || 0)));
+        const colour = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
+        return '<div><div class="flex justify-between items-center text-xs mb-1 gap-2">' +
+            '<span class="truncate">' + pageEscape(b.category_name || 'Category') + '</span>' +
+            '<span class="text-gray-400 whitespace-nowrap">' + pageMoney(b.spent) + ' / ' + pageMoney(b.budget) + '</span>' +
+            '<button class="text-[10px] text-accent-yellow hover:underline" onclick="budgetEditForm(' +
+            widgetId + ',' + Number(b.category_id) + ',' + Number(b.budget) + ')">edit</button></div>' +
+            '<div class="h-2 bg-surface-300 rounded-full overflow-hidden">' +
+            '<div class="h-full ' + colour + '" style="width:' + pct + '%"></div></div></div>';
+    }).join('') + '</div>';
+    return html;
+}
+
+async function pageApi(url, options) {
+    const opts = Object.assign({}, options || {});
+    opts.headers = Object.assign({'Content-Type': 'application/json'}, opts.headers || {});
+    const res = await fetch(url, opts);
+    let data = {};
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok) {
+        const message = (data && data.error && data.error.message) || ('HTTP ' + res.status);
+        throw new Error(message);
+    }
+    return data;
+}
+
+function pageSet(hostId, html) {
+    const host = document.getElementById(hostId);
+    if (host) host.innerHTML = html;
+}
+
+function pageClear(hostId) {
+    pageSet(hostId, '');
+}
+
+let pageCategoryCache = null;
+async function pageCategories() {
+    if (pageCategoryCache) return pageCategoryCache;
+    try {
+        const data = await pageApi('/api/v1/categories');
+        pageCategoryCache = data.categories || [];
+    } catch (err) {
+        pageCategoryCache = [];
+    }
+    return pageCategoryCache;
+}
+
+async function budgetNewForm(widgetId) {
+    const categories = await pageCategories();
+    if (!categories.length) { alert('No categories available'); return; }
+    pageSet('budget-form-' + widgetId,
+        '<div class="flex flex-wrap gap-2 items-center mb-2">' +
+        '<select id="budget-cat-' + widgetId + '" class="input-nb px-2 py-1 text-xs flex-1">' +
+        categories.map(function (c) {
+            return '<option value="' + c.id + '">' + pageEscape(c.name) + '</option>';
+        }).join('') + '</select>' +
+        '<input id="budget-amt-' + widgetId + '" type="number" step="0.01" min="0" placeholder="Amount" ' +
+        'class="input-nb px-2 py-1 text-xs w-24">' +
+        '<button class="btn-nb btn-nb-primary px-2 py-1 text-xs" onclick="budgetSave(' + widgetId + ',null)">Save</button>' +
+        '<button class="btn-nb px-2 py-1 text-xs" onclick="pageClear(\'budget-form-' + widgetId + '\')">Cancel</button>' +
+        '</div>');
+}
+
+function budgetEditForm(widgetId, categoryId, amount) {
+    pageSet('budget-form-' + widgetId,
+        '<div class="flex flex-wrap gap-2 items-center mb-2">' +
+        '<span class="text-xs text-gray-400 flex-1">Update this monthly budget</span>' +
+        '<input id="budget-amt-' + widgetId + '" type="number" step="0.01" min="0" value="' + amount + '" ' +
+        'class="input-nb px-2 py-1 text-xs w-24">' +
+        '<button class="btn-nb btn-nb-primary px-2 py-1 text-xs" onclick="budgetSave(' + widgetId + ',' +
+        Number(categoryId) + ')">Save</button>' +
+        '<button class="btn-nb px-2 py-1 text-xs" onclick="pageClear(\'budget-form-' + widgetId + '\')">Cancel</button>' +
+        '</div>');
+}
+
+async function budgetSave(widgetId, categoryId) {
+    const amountEl = document.getElementById('budget-amt-' + widgetId);
+    const amount = Number(amountEl && amountEl.value);
+    let category = categoryId;
+    if (!category) {
+        const select = document.getElementById('budget-cat-' + widgetId);
+        category = select ? Number(select.value) : null;
+    }
+    if (!category) { alert('Pick a category'); return; }
+    if (!amount || amount <= 0) { alert('Enter an amount greater than zero'); return; }
+    try {
+        await pageApi('/api/v1/budgets', {
+            method: 'POST',
+            body: JSON.stringify({ category_id: category, amount: amount })
+        });
+        await openPage(activePageSlug);
+    } catch (err) {
+        alert('Could not save budget: ' + err.message);
+    }
+}
+
+function goalBody(items, widgetId, editable) {
+    editable = editable !== false;
+    let html = '';
+    if (editable) {
+        html += '<div class="flex justify-end mb-2">' +
+            '<button class="btn-nb px-2 py-1 text-[11px]" onclick="goalNewForm(' + widgetId + ')">New goal</button>' +
+            '</div>';
+    }
+    html += '<div id="goal-form-' + widgetId + '"></div>';
+    if (!Array.isArray(items) || !items.length) {
+        return html + '<div class="text-xs text-gray-500">No goals yet.</div>';
+    }
+    html += '<div class="space-y-3">' + items.map(function (g) {
+        const pct = Math.max(0, Math.min(100, Number(g.percent || 0)));
+        return '<div><div class="flex justify-between items-center text-xs mb-1 gap-2">' +
+            '<span class="truncate">' + pageEscape(g.name) + '</span>' +
+            '<span class="text-gray-400 whitespace-nowrap">' + pageMoney(g.current) + ' / ' + pageMoney(g.target) + '</span>' +
+            (editable ? '<button class="text-[10px] text-accent-yellow hover:underline" onclick="goalAddForm(' +
+                widgetId + ',' + Number(g.id) + ')">add</button>' : '') +
+            '</div><div class="h-2 bg-surface-300 rounded-full overflow-hidden">' +
+            '<div class="h-full bg-accent-yellow" style="width:' + pct + '%"></div></div>' +
+            '<div id="goal-add-' + widgetId + '-' + Number(g.id) + '"></div></div>';
+    }).join('') + '</div>';
+    return html;
+}
+
+function goalNewForm(widgetId) {
+    pageSet('goal-form-' + widgetId,
+        '<div class="flex flex-wrap gap-2 items-center mb-2">' +
+        '<input id="goal-name-' + widgetId + '" type="text" placeholder="Goal name" class="input-nb px-2 py-1 text-xs flex-1">' +
+        '<input id="goal-target-' + widgetId + '" type="number" step="0.01" min="0" placeholder="Target" class="input-nb px-2 py-1 text-xs w-24">' +
+        '<button class="btn-nb btn-nb-primary px-2 py-1 text-xs" onclick="goalCreate(' + widgetId + ')">Save</button>' +
+        '<button class="btn-nb px-2 py-1 text-xs" onclick="pageClear(\'goal-form-' + widgetId + '\')">Cancel</button>' +
+        '</div>');
+}
+
+async function goalCreate(widgetId) {
+    const nameEl = document.getElementById('goal-name-' + widgetId);
+    const targetEl = document.getElementById('goal-target-' + widgetId);
+    const name = (nameEl && nameEl.value || '').trim();
+    const target = Number(targetEl && targetEl.value);
+    if (!name) { alert('Give the goal a name'); return; }
+    if (!target || target <= 0) { alert('Enter a target greater than zero'); return; }
+    try {
+        await pageApi('/api/v1/goals', {
+            method: 'POST',
+            body: JSON.stringify({ name: name, target_amount: target })
+        });
+        await openPage(activePageSlug);
+    } catch (err) {
+        alert('Could not create goal: ' + err.message);
+    }
+}
+
+function goalAddForm(widgetId, goalId) {
+    pageSet('goal-add-' + widgetId + '-' + goalId,
+        '<div class="flex gap-2 items-center mt-2">' +
+        '<input id="goal-amount-' + widgetId + '-' + goalId + '" type="number" step="0.01" min="0" ' +
+        'placeholder="Amount" class="input-nb px-2 py-1 text-xs w-24">' +
+        '<button class="btn-nb btn-nb-primary px-2 py-1 text-xs" onclick="goalAdd(' + widgetId + ',' +
+        goalId + ')">Add</button>' +
+        '<button class="btn-nb px-2 py-1 text-xs" onclick="pageClear(\'goal-add-' + widgetId + '-' +
+        goalId + '\')">Cancel</button></div>');
+}
+
+async function goalAdd(widgetId, goalId) {
+    const amountEl = document.getElementById('goal-amount-' + widgetId + '-' + goalId);
+    const amount = Number(amountEl && amountEl.value);
+    if (!amount || amount <= 0) { alert('Enter an amount greater than zero'); return; }
+    try {
+        await pageApi('/api/v1/goals/' + goalId + '/contributions', {
+            method: 'POST',
+            body: JSON.stringify({ amount: amount, note: 'from dashboard' })
+        });
+        await openPage(activePageSlug);
+    } catch (err) {
+        alert('Could not add to goal: ' + err.message);
+    }
+}
+
+function chartSeries(data) {
+    if (!data) return null;
+    if (data.groups) {
+        return {
+            type: 'doughnut',
+            labels: data.groups.map(function (g) { return g.key; }),
+            values: data.groups.map(function (g) { return g.total; })
+        };
+    }
+    const rows = Array.isArray(data) ? data : (data.trends || data.history || null);
+    if (!Array.isArray(rows) || !rows.length) return null;
+    if (rows[0].income !== undefined || rows[0].expenses !== undefined) {
+        return {
+            type: 'bar',
+            labels: rows.map(function (r) { return r.label || r.month || r.key || ''; }),
+            datasets: [
+                { label: 'Income', values: rows.map(function (r) { return r.income || 0; }) },
+                { label: 'Expenses', values: rows.map(function (r) { return r.expenses || 0; }) }
+            ]
+        };
+    }
+    return {
+        type: 'bar',
+        labels: rows.map(function (r) { return r.label || r.name || r.key || ''; }),
+        values: rows.map(function (r) { return r.total !== undefined ? r.total : (r.amount || r.value || 0); })
+    };
+}
+
+function drawPageChart(canvasId, widget) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas || typeof Chart === 'undefined') return;
+    const series = chartSeries(widget.data);
+    if (!series) return;
+    const config = {
+        type: series.type,
+        data: {
+            labels: series.labels,
+            datasets: series.datasets
+                ? series.datasets.map(function (d, i) {
+                    return { label: d.label, data: d.values, backgroundColor: PAGE_PALETTE[i % PAGE_PALETTE.length] };
+                })
+                : [{ data: series.values, backgroundColor: PAGE_PALETTE, borderWidth: 0 }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: series.type === 'doughnut', position: 'bottom',
+                                 labels: { color: '#9ca3af', boxWidth: 10 } } },
+            scales: series.type === 'doughnut' ? {} : {
+                x: { ticks: { color: '#6b7280' }, grid: { display: false } },
+                y: { ticks: { color: '#6b7280' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+            }
+        }
+    };
+    pageCharts[canvasId] = new Chart(canvas, config);
 }

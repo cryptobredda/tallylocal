@@ -7,11 +7,12 @@ from werkzeug.utils import secure_filename
 from sqlalchemy import func, and_, or_
 from app.database import get_session, init_db, DB_PATH, set_request_db_path
 from app.models import (
-    Transaction, Category, Account, BankStatement, TransactionRule, 
+    Transaction, TransactionView, Category, Account, BankStatement, TransactionRule, 
     TransactionType, Settings, AccountType, Asset, AssetHolding, 
     AssetTransaction, AssetPriceCache, AssetType, AssetTransactionType,
     AssetPriceHistory, PortfolioSnapshot
 )
+from app.core import RawRecordLocked, TallyCore, TallyError
 from app.auth_service import (
     get_user_count,
     create_user,
@@ -105,6 +106,13 @@ def remove_user_uploads(user_id):
     user_folder = os.path.join(base_folder, f'user_{user_id}')
     if os.path.isdir(user_folder):
         shutil.rmtree(user_folder, ignore_errors=True)
+
+
+def request_core():
+    """Core bound to the current user's database (or the default one)."""
+    user = getattr(g, 'current_user', None)
+    return TallyCore(db_path=getattr(g, 'current_db_path', None) or DB_PATH,
+                     actor=user.username if user else 'user')
 
 
 @main_bp.route('/')
@@ -418,128 +426,59 @@ def upload_statement():
         session.close()
 
 
+def _import_statement_record(statement, session):
+    """Import one uploaded statement through the layout-agnostic engine.
+
+    The legacy OCR parser was HSBC-only; this routes the upload tab through the
+    same preview/commit pipeline as the CLI and agents.
+    """
+    core = request_core()
+    preview = core.import_preview(statement.file_path, account_id=statement.account_id)
+    batch = preview['batch']
+    result = core.import_commit(batch['id'])
+
+    statement.processed = True
+    statement.processed_at = datetime.utcnow()
+    statement.transactions_count = result['imported']
+    statement.bank_name = batch.get('bank')
+    statement.opening_balance = batch.get('opening_balance')
+    statement.closing_balance = batch.get('closing_balance')
+    statement.error_message = '; '.join(batch.get('warnings') or []) or None
+
+    session.query(Transaction).filter(Transaction.import_batch_id == batch['id']).update(
+        {'statement_file': statement.filename}, synchronize_session=False)
+    session.commit()
+
+    return {'id': statement.id, 'filename': statement.filename,
+            'status': 'success', 'imported': result['imported'],
+            'skipped': result['skipped'], 'batch_id': batch['id'],
+            'bank': batch.get('bank'), 'profile': batch.get('profile'),
+            'confidence': batch.get('confidence'),
+            'warnings': batch.get('warnings') or [],
+            'reversible': True}
+
+
 @api_bp.route('/process/<int:statement_id>', methods=['POST'])
 def process_statement(statement_id):
+    """Parse a previously uploaded statement and import it."""
     session = get_session()
     try:
         statement = session.query(BankStatement).filter(BankStatement.id == statement_id).first()
         if not statement:
             return jsonify({'error': 'Statement not found'}), 404
-        
         try:
-            # Use the new HSBC parser for structured column-based parsing
-            hsbc_parser = HSBCStatementParser()
-            
-            # Detect bank first
-            bank_name = hsbc_parser.detect_bank(statement.file_path)
-            statement.bank_name = bank_name
-            
-            # Parse transactions using column-based approach (now returns dict with balances)
-            parse_result = hsbc_parser.parse_statement(statement.file_path)
-            parsed_transactions = parse_result['transactions']
-            
-            # Store balances from statement
-            statement.opening_balance = parse_result.get('opening_balance')
-            statement.closing_balance = parse_result.get('closing_balance')
-            
-            # Store raw text for reference
-            raw_text = ocr_service.process_statement(statement.file_path)
-            statement.raw_text = raw_text
-            
-            transactions_added = []
-            for tx_data in parsed_transactions:
-                if not tx_data.get('date') or not tx_data.get('amount'):
-                    continue
-                    
-                categorization = categorization_service.categorize_transaction(
-                    tx_data['description'],
-                    tx_data['amount'],
-                    session=session  # Pass the session to avoid conflicts
-                )
-                
-                tx_type = TransactionType.INCOME if tx_data['type'] == 'income' else TransactionType.EXPENSE
-                
-                transaction = Transaction(
-                    date=tx_data['date'],
-                    description=tx_data['description'],
-                    original_description=tx_data['description'],
-                    amount=tx_data['amount'],
-                    transaction_type=tx_type,
-                    category_id=categorization['category_id'] if categorization else None,
-                    bank_name=bank_name,
-                    statement_file=statement.filename
-                )
-                session.add(transaction)
-                session.flush()  # Flush to get the ID
-                
-                transactions_added.append({
-                    'id': transaction.id,
-                    'description': tx_data['description'],
-                    'amount': tx_data['amount'],
-                    'type': tx_data['type'],
-                    'payment_type': tx_data.get('payment_type'),
-                    'category': categorization['category_name'] if categorization else None
-                })
-            
-            # Update statement status
-            statement.processed = True
-            statement.processed_at = datetime.utcnow()
-            statement.transactions_count = len(transactions_added)
-            
-            # Commit all changes
-            session.commit()
-            
-            # Handle pot allocations after commit (separate transactions)
-            for tx_data in parsed_transactions:
-                if tx_data.get('type') == 'income' and tx_data.get('amount'):
-                    try:
-                        pot_service.auto_allocate_from_income(
-                            tx_data['amount'],
-                            tx_data.get('description', '')
-                        )
-                    except Exception as e:
-                        print(f"Warning: Failed to allocate to pots: {e}")
-            
-            return jsonify({
-                'status': 'success',
-                'statement_id': statement_id,
-                'bank_detected': bank_name,
-                'transactions_count': len(transactions_added),
-                'opening_balance': parse_result.get('opening_balance'),
-                'closing_balance': parse_result.get('closing_balance'),
-                'transactions': transactions_added
-            })
-            
-        except Exception as e:
+            payload = _import_statement_record(statement, session)
+            return jsonify(payload)
+        except Exception as exc:
             session.rollback()
-            statement.error_message = str(e)
-            try:
+            statement = session.query(BankStatement).filter(BankStatement.id == statement_id).first()
+            if statement:
+                statement.error_message = str(exc)[:500]
+                statement.processed = False
                 session.commit()
-            except:
-                pass
-            import traceback
-            traceback.print_exc()
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': str(exc)}), 400
     finally:
         session.close()
-
-
-# Global processing status tracker
-import threading
-import time
-
-PROCESSING_TEMPLATE = {
-    'is_processing': False,
-    'started_at': None,
-    'current_file': None,
-    'current_index': 0,
-    'total_files': 0,
-    'completed': [],
-    'errors': [],
-    'phase': 'idle'
-}
-processing_status_map = {}
-processing_lock = threading.Lock()
 
 
 def _status_key():
@@ -587,172 +526,38 @@ def get_processing_status():
 
 @api_bp.route('/process-all', methods=['POST'])
 def process_all_pending():
-    """Process all unprocessed statements"""
-    from app.ocr_service import reset_ocr_service
-    from app.models import Account, AccountType
-    
-    # Check if already processing
-    with processing_lock:
-        status = _get_processing_status()
-        if status['is_processing']:
-            return jsonify({'error': 'Processing already in progress'}), 409
-    
-    # Get account_id from request body (optional)
-    data = request.get_json() or {}
-    target_account_id = data.get('account_id')
-    
+    """Import every statement that has not been processed yet."""
     session = get_session()
     try:
-        # If no account specified, use the main account
-        if not target_account_id:
-            main_account = session.query(Account).filter(
-                Account.account_type == AccountType.MAIN,
-                Account.is_active == True
-            ).first()
-            if main_account:
-                target_account_id = main_account.id
-        
-        pending = session.query(BankStatement).filter(
-            BankStatement.processed == False,
-            BankStatement.error_message == None
-        ).all()
-        
-        # Get statement IDs and filenames upfront
-        pending_items = [(s.id, s.filename) for s in pending]
+        pending_ids = [s.id for s in session.query(BankStatement)
+                       .filter(BankStatement.processed.is_(False))
+                       .order_by(BankStatement.id).all()]
+    finally:
         session.close()
-        
-        if not pending_items:
-            return jsonify({'processed': 0, 'errors': 0, 'results': [], 'message': 'No pending statements'})
-        
-        # Initialize processing status
-        update_processing_status(
-            is_processing=True,
-            started_at=time.time(),
-            current_file=None,
-            current_index=0,
-            total_files=len(pending_items),
-            completed=[],
-            errors=[],
-            phase='initializing'
-        )
-        
-        # Create single parser instance for all statements
-        hsbc_parser = HSBCStatementParser()
-        
-        update_processing_status(phase='processing')
-        
-        results = []
-        for idx, (stmt_id, filename) in enumerate(pending_items):
-            update_processing_status(
-                current_file=filename,
-                current_index=idx + 1
-            )
-            
-            session = get_session()
-            statement = session.query(BankStatement).filter(BankStatement.id == stmt_id).first()
-            
+
+    results = []
+    for statement_id in pending_ids:
+        session = get_session()
+        try:
+            statement = session.query(BankStatement).filter(BankStatement.id == statement_id).first()
             if not statement:
                 continue
-                
             try:
-                bank_name = hsbc_parser.detect_bank(statement.file_path)
-                statement.bank_name = bank_name
-                statement.account_id = target_account_id  # Link statement to account
-                
-                parse_result = hsbc_parser.parse_statement(statement.file_path)
-                parsed_transactions = parse_result['transactions']
-                
-                statement.opening_balance = parse_result.get('opening_balance')
-                statement.closing_balance = parse_result.get('closing_balance')
-                
-                tx_count = 0
-                for tx_data in parsed_transactions:
-                    if not tx_data.get('date') or not tx_data.get('amount'):
-                        continue
-                    
-                    categorization = categorization_service.categorize_transaction(
-                        tx_data['description'],
-                        tx_data['amount'],
-                        session=session
-                    )
-                    
-                    tx_type = TransactionType.INCOME if tx_data['type'] == 'income' else TransactionType.EXPENSE
-                    
-                    transaction = Transaction(
-                        date=tx_data['date'],
-                        description=tx_data['description'],
-                        original_description=tx_data['description'],
-                        amount=tx_data['amount'],
-                        transaction_type=tx_type,
-                        category_id=categorization['category_id'] if categorization else None,
-                        account_id=target_account_id,  # Assign to selected account
-                        bank_name=bank_name,
-                        statement_file=statement.filename
-                    )
-                    session.add(transaction)
-                    tx_count += 1
-                
-                statement.processed = True
-                statement.processed_at = datetime.utcnow()
-                statement.transactions_count = tx_count
-                session.commit()
-                
-                result = {
-                    'id': stmt_id,
-                    'filename': statement.filename,
-                    'status': 'success',
-                    'transactions_count': tx_count
-                }
-                results.append(result)
-                
-                with processing_lock:
-                    status = _get_processing_status()
-                    status['completed'].append(result)
-                
-            except Exception as e:
-                import traceback
-                error_detail = f"{str(e)}\n{traceback.format_exc()}"
-                print(f"ERROR processing statement {statement.filename}: {error_detail}")
-                
-                # Reset OCR engine on error (PaddleOCR can get into corrupted state)
-                try:
-                    reset_ocr_service()
-                except:
-                    pass
-                
-                result = {
-                    'id': stmt_id,
-                    'filename': statement.filename if statement else 'unknown',
-                    'status': 'error',
-                    'error': str(e)
-                }
-                results.append(result)
-                
-                with processing_lock:
-                    status = _get_processing_status()
-                    status['errors'].append(result)
-            finally:
-                session.close()
-        
-        # Mark processing as complete
-        update_processing_status(
-            is_processing=False,
-            phase='complete',
-            current_file=None
-        )
-        
-        return jsonify({
-            'processed': len([r for r in results if r['status'] == 'success']),
-            'errors': len([r for r in results if r['status'] == 'error']),
-            'results': results
-        })
-    except Exception as e:
-        update_processing_status(
-            is_processing=False,
-            phase='idle',
-            current_file=None
-        )
-        return jsonify({'error': str(e)}), 500
+                payload = _import_statement_record(statement, session)
+                results.append(payload)
+            except Exception as exc:
+                session.rollback()
+                statement = session.query(BankStatement).filter(BankStatement.id == statement_id).first()
+                if statement:
+                    statement.error_message = str(exc)[:500]
+                    session.commit()
+                results.append({'id': statement_id, 'status': 'error', 'error': str(exc)})
+        finally:
+            session.close()
+
+    return jsonify({'processed': len([r for r in results if r.get('status') == 'success']),
+                    'errors': len([r for r in results if r.get('status') == 'error']),
+                    'results': results})
 
 
 @api_bp.route('/transactions', methods=['POST'])
@@ -833,16 +638,16 @@ def get_transactions():
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
         
-        query = session.query(Transaction).order_by(Transaction.date.desc())
+        query = session.query(TransactionView).order_by(TransactionView.date.desc())
         
         if category_id:
-            query = query.filter(Transaction.category_id == category_id)
+            query = query.filter(TransactionView.category_id == category_id)
         if pot_id:
-            query = query.filter(Transaction.pot_id == pot_id)
+            query = query.filter(TransactionView.account_id == pot_id)
         if start_date:
-            query = query.filter(Transaction.date >= datetime.fromisoformat(start_date))
+            query = query.filter(TransactionView.date >= datetime.fromisoformat(start_date))
         if end_date:
-            query = query.filter(Transaction.date <= datetime.fromisoformat(end_date))
+            query = query.filter(TransactionView.date <= datetime.fromisoformat(end_date))
         
         total = query.count()
         transactions = query.offset((page - 1) * per_page).limit(per_page).all()
@@ -859,8 +664,8 @@ def get_transactions():
                 'category_id': t.category_id,
                 'category_name': t.category.name if t.category else None,
                 'category_color': t.category.color if t.category else None,
-                'pot_id': t.pot_id,
-                'pot_name': t.pot.name if t.pot else None,
+                'pot_id': t.account_id,
+                'pot_name': t.account.name if t.account else None,
                 'account_id': t.account_id,
                 'account_name': t.account.name if t.account else None,
                 'account_type': t.account.account_type.value if t.account and t.account.account_type else None,
@@ -897,12 +702,65 @@ def get_transactions():
 
 @api_bp.route('/transactions/<int:transaction_id>', methods=['PUT'])
 def update_transaction(transaction_id):
+    """Annotate a transaction through the overlay.
+
+    Raw bank/statement rows keep their amount, date and description; edits are
+    stored in transaction_overrides and are reversible.
+    """
+    data = request.json or {}
+    core = request_core()
+    try:
+        current = core.get_transaction(transaction_id, include_raw=False)
+    except TallyError:
+        return jsonify({'error': 'Transaction not found'}), 404
+
+    if data.get('is_transfer'):
+        return _legacy_transfer_update(transaction_id)
+
+    patch = {}
+    for key in ('description', 'category_id', 'notes', 'tags', 'is_one_off', 'is_recurring'):
+        if key in data:
+            patch[key] = data[key]
+    if 'pot_id' in data:
+        patch['account_id'] = data['pot_id']
+    if not patch:
+        return jsonify({'error': 'No supported fields to update'}), 400
+
+    try:
+        result = core.update_transaction(transaction_id, patch)
+    except RawRecordLocked as exc:
+        return jsonify({'error': str(exc)}), 409
+    except TallyError as exc:
+        return jsonify({'error': str(exc)}), getattr(exc, 'status', 400)
+
+    if 'category_id' in patch:
+        try:
+            categorization_service.learn_from_categorization(
+                current['description'], patch['category_id'], data.get('pot_id'),
+                data.get('is_one_off', False))
+        except Exception:
+            pass
+
+    return jsonify({
+        'id': transaction_id,
+        'description': result['description'],
+        'category_id': result.get('category_id'),
+        'pot_id': result.get('account_id'),
+        'is_one_off': result.get('is_one_off'),
+        'message': 'Transaction updated successfully',
+    })
+
+
+def _legacy_transfer_update(transaction_id):
     session = get_session()
     try:
         transaction = session.query(Transaction).filter(Transaction.id == transaction_id).first()
         if not transaction:
             return jsonify({'error': 'Transaction not found'}), 404
-        
+        if transaction.is_raw_locked:
+            return jsonify({'error': 'Bank transactions cannot be converted to transfers; '
+                                      'record the transfer manually instead'}), 409
+
         data = request.json
         description = transaction.description
         
@@ -1003,23 +861,57 @@ def update_transaction(transaction_id):
 
 @api_bp.route('/transactions/<int:transaction_id>', methods=['DELETE'])
 def delete_transaction(transaction_id):
-    session = get_session()
     try:
-        transaction = session.query(Transaction).filter(Transaction.id == transaction_id).first()
-        if not transaction:
-            return jsonify({'error': 'Transaction not found'}), 404
-        
-        session.delete(transaction)
-        session.commit()
-        
-        return jsonify({'message': 'Transaction deleted successfully'})
-    finally:
-        session.close()
+        result = request_core().delete_transaction(transaction_id, confirm=True)
+    except TallyError as exc:
+        return jsonify({'error': str(exc)}), getattr(exc, 'status', 400)
+    return jsonify({'message': 'Transaction deleted successfully', 'reversible': True,
+                    'id': result['id']})
+
+
+@api_bp.route('/transactions/<int:transaction_id>/restore', methods=['POST'])
+def restore_transaction(transaction_id):
+    try:
+        request_core().restore_transaction(transaction_id)
+    except TallyError as exc:
+        return jsonify({'error': str(exc)}), getattr(exc, 'status', 400)
+    return jsonify({'message': 'Transaction restored', 'id': transaction_id})
 
 
 @api_bp.route('/transactions/bulk-update', methods=['PUT', 'POST'])
 def bulk_update_transactions():
-    """Update multiple transactions at once"""
+    """Bulk annotate through the overlay (raw rows stay intact)."""
+    data = request.json or {}
+    ids = data.get('ids', data.get('transaction_ids', []))
+    updates = data.get('updates', {}) or data.get('patch', {})
+
+    if not ids:
+        return jsonify({'error': 'No transaction IDs provided'}), 400
+    if not updates:
+        return jsonify({'error': 'No updates provided'}), 400
+    if updates.get('is_transfer'):
+        return _legacy_bulk_update()
+
+    patch = {}
+    for key in ('category_id', 'description', 'notes', 'tags', 'is_one_off', 'is_recurring'):
+        if key in updates:
+            patch[key] = updates[key]
+    if 'pot_id' in updates:
+        patch['account_id'] = updates['pot_id']
+    if 'account_id' in updates:
+        patch['account_id'] = updates['account_id']
+
+    try:
+        result = request_core().bulk_update(ids, patch)
+    except TallyError as exc:
+        return jsonify({'error': str(exc)}), getattr(exc, 'status', 400)
+
+    return jsonify({'message': f"Successfully updated {result['updated']} transactions",
+                    'updated': result['updated'], 'failed': result['failed'],
+                    'linked_created': 0})
+
+
+def _legacy_bulk_update():
     session = get_session()
     try:
         data = request.json
@@ -1466,13 +1358,13 @@ def get_budgets():
             else:
                 end_date = datetime(b.year, b.month + 1, 1)
             
-            actual = session.query(func.sum(Transaction.amount)).filter(
+            actual = session.query(func.sum(TransactionView.amount)).filter(
                 and_(
-                    Transaction.category_id == b.category_id,
-                    Transaction.transaction_type == TransactionType.EXPENSE,
-                    Transaction.date >= start_date,
-                    Transaction.date < end_date,
-                    or_(Transaction.is_internal_transfer == False, Transaction.is_internal_transfer == None)
+                    TransactionView.category_id == b.category_id,
+                    TransactionView.transaction_type == TransactionType.EXPENSE,
+                    TransactionView.date >= start_date,
+                    TransactionView.date < end_date,
+                    or_(TransactionView.is_internal_transfer == False, TransactionView.is_internal_transfer == None)
                 )
             ).scalar() or 0
             
@@ -1593,13 +1485,13 @@ def get_budget_summary():
         categories_data = []
         
         for b in budgets:
-            actual = session.query(func.sum(Transaction.amount)).filter(
+            actual = session.query(func.sum(TransactionView.amount)).filter(
                 and_(
-                    Transaction.category_id == b.category_id,
-                    Transaction.transaction_type == TransactionType.EXPENSE,
-                    Transaction.date >= start_date,
-                    Transaction.date < end_date,
-                    or_(Transaction.is_internal_transfer == False, Transaction.is_internal_transfer == None)
+                    TransactionView.category_id == b.category_id,
+                    TransactionView.transaction_type == TransactionType.EXPENSE,
+                    TransactionView.date >= start_date,
+                    TransactionView.date < end_date,
+                    or_(TransactionView.is_internal_transfer == False, TransactionView.is_internal_transfer == None)
                 )
             ).scalar() or 0
             
@@ -1668,16 +1560,16 @@ def export_transactions():
         category_id = request.args.get('category_id', type=int)
         account_id = request.args.get('account_id', type=int)
         
-        query = session.query(Transaction).order_by(Transaction.date.desc())
+        query = session.query(TransactionView).order_by(TransactionView.date.desc())
         
         if start_date:
-            query = query.filter(Transaction.date >= datetime.fromisoformat(start_date))
+            query = query.filter(TransactionView.date >= datetime.fromisoformat(start_date))
         if end_date:
-            query = query.filter(Transaction.date <= datetime.fromisoformat(end_date))
+            query = query.filter(TransactionView.date <= datetime.fromisoformat(end_date))
         if category_id:
-            query = query.filter(Transaction.category_id == category_id)
+            query = query.filter(TransactionView.category_id == category_id)
         if account_id:
-            query = query.filter(Transaction.account_id == account_id)
+            query = query.filter(TransactionView.account_id == account_id)
         
         transactions = query.all()
         
@@ -1755,7 +1647,7 @@ def export_full_data():
         ]
         
         # Export transactions with all fields
-        transactions = session.query(Transaction).order_by(Transaction.date).all()
+        transactions = session.query(TransactionView).order_by(TransactionView.date).all()
         transactions_data = [
             {
                 'date': t.date.isoformat(),

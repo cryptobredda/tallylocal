@@ -1,0 +1,14 @@
+id: revolut
+name: Revolut
+match:
+  any: ["revolut"]
+dates: ["%d %b %Y", "%Y-%m-%d", "%d/%m/%Y"]
+currency: EUR
+columns:
+  date: ["date", "transaction date", "posted date"]
+  description: ["details", "description", "payee", "narrative", "transaction"]
+  out: []
+  in: []
+  balance: ["balance"]
+  amount: ["amount"]
+skip_rows: ["balance brought forward", "balance carried forward", "opening balance", "closing balance", "sort code", "account number"]

@@ -2,7 +2,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from sqlalchemy import func, and_, extract, or_
 from app.database import get_session
-from app.models import Transaction, Category, Account, BankStatement, TransactionType
+from app.models import TransactionView as Transaction, Category, Account, BankStatement, TransactionType
 
 
 class AnalyticsService:
@@ -734,8 +734,10 @@ class AnalyticsService:
             total_expenses = sum(t.amount for t in all_transactions 
                                 if t.transaction_type == TransactionType.EXPENSE)
             
-            uncategorized = session.query(func.count(Transaction.id)).join(Category).filter(
-                Category.name == 'Uncategorized'
+            uncategorized = session.query(func.count(Transaction.id)).outerjoin(
+                Category, Transaction.category_id == Category.id
+            ).filter(
+                or_(Transaction.category_id.is_(None), Category.name == 'Uncategorized')
             ).scalar() or 0
             
             # Get account totals (non-main accounts)

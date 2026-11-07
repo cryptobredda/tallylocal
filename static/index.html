@@ -216,6 +216,9 @@
                 <a onclick="showTab('dashboard')" class="nav-item active flex items-center gap-3 cursor-pointer" data-tab="dashboard">
                     <i class="fas fa-th-large"></i>Dashboard
                 </a>
+                <a onclick="showTab('pages')" class="nav-item flex items-center gap-3 cursor-pointer" data-tab="pages">
+                    <i class="fas fa-layer-group"></i>Pages
+                </a>
                 <a onclick="showTab('transactions')" class="nav-item flex items-center gap-3 cursor-pointer" data-tab="transactions">
                     <i class="fas fa-receipt"></i>Transactions
                 </a>
@@ -1389,11 +1392,27 @@
         </main>
     </div>
 
+    <!-- Pages: user- or agent-created dashboards -->
+    <div id="tab-pages" class="tab-content p-4 lg:p-6 max-w-7xl mx-auto">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-5">
+            <div>
+                <h1 class="text-2xl font-bold">Your pages</h1>
+                <p class="text-sm text-gray-500">Built by you, or by your agent. Ask it to create a goal tracker or budget board.</p>
+            </div>
+            <div id="pages-nav" class="flex gap-2 flex-wrap"></div>
+        </div>
+        <div id="pages-content" class="space-y-4"></div>
+    </div>
+
     <!-- Mobile Bottom Nav -->
     <nav class="bottom-nav fixed bottom-0 left-0 right-0 bg-surface-100 border-t border-surface-300 px-2 py-2 z-50 justify-around">
         <button onclick="showTab('dashboard')" class="flex flex-col items-center gap-1 px-3 py-1 text-gray-500 mobile-nav-item" data-tab="dashboard">
             <i class="fas fa-th-large text-lg"></i>
             <span class="text-[10px]">Home</span>
+        </button>
+        <button onclick="showTab('pages')" class="flex flex-col items-center gap-1 px-3 py-1 text-gray-500 mobile-nav-item" data-tab="pages">
+            <i class="fas fa-layer-group text-lg"></i>
+            <span class="text-[10px]">Pages</span>
         </button>
         <button onclick="showTab('transactions')" class="flex flex-col items-center gap-1 px-3 py-1 text-gray-500 mobile-nav-item" data-tab="transactions">
             <i class="fas fa-receipt text-lg"></i>
@@ -1871,6 +1890,23 @@
         </div>
     </div>
 
+    <script>
+        /* Send the CSRF marker on every same-origin API call, including GETs so
+           the server can distinguish the SPA from a random cross-site request. */
+        (function () {
+            const originalFetch = window.fetch.bind(window);
+            window.fetch = function (input, init) {
+                init = init || {};
+                const url = typeof input === 'string' ? input : (input && input.url) || '';
+                if (url.indexOf('/api/') !== -1) {
+                    const headers = new Headers(init.headers || (input && input.headers) || {});
+                    headers.set('X-Tally-Client', 'web');
+                    init.headers = headers;
+                }
+                return originalFetch(input, init);
+            };
+        })();
+    </script>
     <script src="/app.js"></script>
 </body>
 </html>

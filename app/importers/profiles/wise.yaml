@@ -1,0 +1,14 @@
+id: wise
+name: Wise
+match:
+  any: ["wise"]
+dates: ["%d/%m/%Y", "%Y-%m-%d", "%d %b %Y"]
+currency: GBP
+columns:
+  date: ["date", "transaction date", "posted date"]
+  description: ["details", "description", "payee", "narrative", "transaction"]
+  out: []
+  in: []
+  balance: ["balance"]
+  amount: ["amount"]
+skip_rows: ["balance brought forward", "balance carried forward", "opening balance", "closing balance", "sort code", "account number"]

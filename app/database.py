@@ -1,6 +1,9 @@
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 from flask import g, session as flask_session, has_request_context
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -13,14 +16,55 @@ DB_PATH = os.path.join(DATA_ROOT, 'finance_tracker.db')
 # Engine/session caches keyed by db path
 _engine_cache = {}
 _session_factory_cache = {}
+# Lets non-request code (CLI, MCP) point every helper at one database.
+_active_db_path = ContextVar('tally_active_db_path', default=None)
 
 Base = declarative_base()
+
+
+@contextmanager
+def activate_db(path):
+    token = _active_db_path.set(path)
+    try:
+        yield
+    finally:
+        _active_db_path.reset(token)
+
+
+def _install_pragmas(engine):
+    """WAL + busy timeout: the app, the CLI and the MCP server share one file.
+
+    Without these, an agent writing while the UI reads raises
+    'database is locked' under normal use.
+    """
+    @event.listens_for(engine, 'connect')
+    def _set_pragmas(dbapi_conn, _record):
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute('PRAGMA journal_mode=WAL')
+            cur.execute('PRAGMA synchronous=NORMAL')
+            cur.execute('PRAGMA busy_timeout=5000')
+            cur.execute('PRAGMA foreign_keys=ON')
+        finally:
+            cur.close()
+
+
+def make_engine(path):
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    engine = create_engine(f'sqlite:///{path}', echo=False,
+                           connect_args={'check_same_thread': False, 'timeout': 10})
+    _install_pragmas(engine)
+    return engine
+
 
 
 def _resolve_db_path(db_path=None):
     """Return the active database path for this request/context."""
     if db_path:
         return db_path
+    active = _active_db_path.get()
+    if active:
+        return active
     if has_request_context():
         requested = getattr(g, 'current_db_path', None)
         if requested:
@@ -37,8 +81,7 @@ def get_engine(db_path=None):
     path = _resolve_db_path(db_path)
     engine = _engine_cache.get(path)
     if not engine:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        engine = create_engine(f'sqlite:///{path}', echo=False, connect_args={'check_same_thread': False})
+        engine = make_engine(path)
         _engine_cache[path] = engine
     return engine
 
@@ -59,7 +102,15 @@ def init_db(db_path=None):
     target_path = _resolve_db_path(db_path)
     engine = get_engine(target_path)
     from app import models  # noqa: F401
-    Base.metadata.create_all(engine)
+    from app.migrate import VIEW_NAME, create_views
+    # The projection is a VIEW, not a table: exclude it from create_all, then
+    # create it once the base tables exist.
+    Base.metadata.create_all(
+        engine,
+        tables=[t for t in Base.metadata.sorted_tables if t.name != VIEW_NAME],
+    )
+    with engine.begin() as conn:
+        create_views(conn)
     print(f"Database initialized at: {target_path}")
     _init_default_categories(target_path)
     _init_default_accounts(target_path)

@@ -1,0 +1,14 @@
+id: barclays_uk
+name: Barclays
+match:
+  any: ["barclays"]
+dates: ["%d %b %y", "%d %b %Y", "%d/%m/%Y", "%d/%m/%y"]
+currency: GBP
+columns:
+  date: ["date", "transaction date", "posted date"]
+  description: ["details", "description", "payee", "narrative", "transaction"]
+  out: ["money out", "paid out", "debit"]
+  in: ["money in", "paid in", "credit"]
+  balance: ["balance"]
+skip_rows: ["balance brought forward", "balance carried forward", "opening balance", "closing balance", "sort code", "account number"]
+strip_prefixes: ["VIS", "DD", "SO", "BP", "TFR", "ATM", "CR", "DEB", "FPI", "FPO", "BGC", "DEP", "CHQ", "CLS", "TSU"]

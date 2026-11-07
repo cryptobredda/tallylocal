@@ -47,7 +47,13 @@ class CategorizationService:
                 pattern = rule.pattern.lower()
                 
                 if rule.match_type == 'contains':
-                    if pattern in desc_lower:
+                    # Short patterns must match whole words: 'tfl' inside 'netflix'
+                    # would otherwise file Netflix under Transport.
+                    if len(pattern) <= 4:
+                        hit = re.search(rf'\b{re.escape(pattern)}\b', desc_lower) is not None
+                    else:
+                        hit = pattern in desc_lower
+                    if hit:
                         return {
                             'category_id': rule.category_id,
                             'category_name': rule.category.name if rule.category else None,

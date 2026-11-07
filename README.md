@@ -1,22 +1,22 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Active-success?style=for-the-badge" alt="Status">
-  <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License">
+  <img src="https://img.shields.io/badge/License-PolyForm_Noncommercial-blue?style=for-the-badge" alt="License">
   <img src="https://img.shields.io/badge/Python-3.10+-yellow?style=for-the-badge&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/100%25-Offline-red?style=for-the-badge" alt="Offline">
+  <img src="https://img.shields.io/badge/Agent--Ready-MCP_✓-brightgreen?style=for-the-badge" alt="Agent Ready">
 </p>
 
 <h1 align="center">💰 Tally Local</h1>
 
 <p align="center">
-  <strong>The personal finance tracker that respects your privacy.</strong><br>
-  100% offline. Your data never leaves your device.
+  <strong>The personal finance tracker that respects your privacy — and speaks to any agent.</strong><br>
+  Local-first. Your data never leaves your device unless you connect a bank.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/No_Cloud-✓-green?style=flat-square" alt="No Cloud">
   <img src="https://img.shields.io/badge/No_Subscriptions-✓-green?style=flat-square" alt="No Subscriptions">
   <img src="https://img.shields.io/badge/No_Tracking-✓-green?style=flat-square" alt="No Tracking">
-  <img src="https://img.shields.io/badge/Open_Source-✓-green?style=flat-square" alt="Open Source">
+  <img src="https://img.shields.io/badge/Source_Available-✓-green?style=flat-square" alt="Source Available">
 </p>
 
 ---
@@ -127,43 +127,47 @@ docker run --rm -p 5000:5000 \
 
 > **Note:** The first time you run inside Docker you still need to create the initial admin account via the setup screen.
 
-### PaddleOCR Setup (Required for Bank Statement Import)
+### Updating a hosted install
 
-Bank statement OCR is a core feature of Tally Local. You'll need to install PaddlePaddle and PaddleOCR.
+The image is published to GHCR on every push to `main` as
+`ghcr.io/cryptobredda/tallylocal:latest`. Data lives in the `finance_data`
+volume, so an update only replaces the container.
 
-> **📚 Official Documentation:** [PaddleOCR GitHub](https://github.com/PaddlePaddle/PaddleOCR) | [Installation Guide](https://paddlepaddle.github.io/PaddleOCR/main/en/ppocr/installation.html)
-
-#### CPU Installation (Recommended for most users)
-
-```bash
-# Install PaddlePaddle (CPU version)
-pip install paddlepaddle
-
-# Install PaddleOCR
-pip install paddleocr
-```
-
-#### GPU Installation (For faster processing)
-
-If you have an NVIDIA GPU with CUDA support:
+Docker (Compose, any host):
 
 ```bash
-# Install PaddlePaddle with GPU support (CUDA 11.8)
-pip install paddlepaddle-gpu
-
-# Install PaddleOCR
-pip install paddleocr
+cd /opt/tallylocal
+docker compose pull
+docker compose up -d
 ```
 
-#### Important Notes
+Proxmox LXC (installed with the helper script):
 
-> ⚠️ **Python Version:** PaddleOCR officially supports Python 3.8 - 3.12. Other versions may have compatibility issues.
+```bash
+bash -c "$(wget -qLO - https://raw.githubusercontent.com/cryptobredda/tallylocal/main/deploy/install/tallylocal-install.sh)" -- --update
+# if the container name is not "tallylocal":
+#   … -- --update --ctid 105
+```
 
-> ⚠️ **First Run:** On first use, PaddleOCR will automatically download the OCR models (~150MB). This requires an internet connection.
+Your accounts, statements and bank connections survive: they live in `/data`
+inside the volume. If you set `TALLY_ENCRYPTION_KEY`, keep it — without it, bank
+connections cannot be decrypted.
 
-> ⚠️ **GPU Users:** Ensure you have the correct CUDA and cuDNN versions installed. See the [PaddlePaddle GPU installation guide](https://www.paddlepaddle.org.cn/install/quick) for version compatibility.
+### PaddleOCR Setup (optional)
 
-> 💡 **Troubleshooting:** If you encounter installation issues, refer to the [PaddleOCR FAQ](https://github.com/PaddlePaddle/PaddleOCR/blob/main/doc/doc_en/FAQ_en.md) or open an issue on their GitHub.
+Tally parses PDF statements from their **text layer** with `pdfplumber` — no OCR
+needed for most digital statements, and no extra install. For scanned PDFs, the
+lightweight fallback is Tesseract:
+
+```bash
+sudo apt install tesseract-ocr poppler-utils
+pip install pytesseract pdf2image
+```
+
+PaddleOCR is still supported if you already have it, but it is no longer required
+(it is roughly 600 MB of models and pins Python to ≤3.12). See
+[docs/statements.md](docs/statements.md) for how parsing, profiles and confidence
+scoring work.
 
 ### Run the Application
 
@@ -171,7 +175,8 @@ pip install paddleocr
 python run.py
 ```
 
-Open your browser and navigate to `http://localhost:5000`
+Open your browser and navigate to `http://127.0.0.1:5000` (the server binds
+loopback by default; set `TALLY_HOST`/`TALLY_ALLOW_REMOTE` to change that).
 
 ---
 
@@ -183,6 +188,40 @@ Wallet syncing talks to public blockchain APIs. Bitcoin wallets use Blockchain.c
 - Helius (Solana). Create a key at [helius.dev](https://dashboard.helius.dev/).
 
 Add these keys inside the app: sign in as an admin, open the **Admin** tab, and use the **API Integrations** card to paste your keys and toggle each provider on. Keys are stored locally in `integrations.json` under your `DATA_DIR` and never leave your machine. Once saved, head to **Assets → Wallets** and click **Sync** on a wallet to fetch balances and history.
+
+---
+
+## 🔌 Use it from any agent
+
+Tally ships an MCP server, a CLI and a versioned HTTP API over the same ledger.
+Any agent that can run a shell command or speak MCP can use it — Claude Desktop,
+Hermes, Cursor, Codex CLI, or your own loop.
+
+```bash
+# 1. give the agent a scoped token (printed once)
+tally token create --name claude --scopes read,write
+
+# 2. print the MCP entry for this machine, then paste it into your client
+tally skill mcp-config
+
+# 3. teach the agent when to use it
+tally skill install --target claude     # or: hermes, cursor, print
+
+# 4. or just use the CLI
+tally context --period 30d
+tally tx list --from 2026-10-01 --group_by category
+tally import preview statement.pdf
+```
+
+Then ask: *"What did I spend on groceries last month, and which subscriptions went up?"*
+
+- [Agent setup: MCP, CLI, API, scopes](docs/agent-setup.md)
+- [Bank connections: Enable Banking, SimpleFIN](docs/banks.md)
+- [Statement import: formats, profiles, confidence](docs/statements.md)
+
+Safety model: bank rows are immutable, annotations live in a separate table, every
+agent write is audited, imports are revertible, and deletes are soft. See the
+agent guide for the details.
 
 ---
 
@@ -310,7 +349,10 @@ Contributions are welcome! Feel free to:
 
 ## 📄 License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+Tally Local is licensed under the **PolyForm Noncommercial License 1.0.0** — free
+for personal use, hobby projects, study, charities, schools and government, but
+**commercial use requires a paid licence**. See [LICENSE](LICENSE) and
+[COMMERCIAL.md](COMMERCIAL.md).
 
 ---
 

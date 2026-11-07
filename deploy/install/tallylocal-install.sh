@@ -5,8 +5,24 @@
 
 set -e
 
+# --- Usage ---
+#   bash tallylocal-install.sh                Fresh install
+#   bash tallylocal-install.sh --update       Pull the latest image and recreate
+#   bash tallylocal-install.sh --update --ctid 105
+UPDATE=0
+CTID_OVERRIDE=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --update) UPDATE=1 ;;
+        --ctid) CTID_OVERRIDE="$2"; shift ;;
+        -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+        *) echo "Unknown option: $1"; exit 2 ;;
+    esac
+    shift
+done
+
 # --- Settings ---
-CTID=$(pvesh get /cluster/nextid 2>/dev/null || echo "101")
+CTID="${CTID_OVERRIDE:-$(pvesh get /cluster/nextid 2>/dev/null || echo "101")}"
 HOSTNAME="tallylocal"
 OS_TEMPLATE="debian-12-standard_12.12-1_amd64.tar.zst"
 STORAGE="local-lvm"
@@ -31,6 +47,25 @@ err()   { echo -e "${RD}❌  ${1}${CL}"; exit 1; }
 [[ "$(id -u)" -ne 0 ]] && err "Run this script as root on the Proxmox host."
 command -v pct >/dev/null 2>&1 || err "pct command not found — is this a Proxmox host?"
 command -v pvesh >/dev/null 2>&1 || err "pvesh command not found."
+
+# --- Update mode: pull the new image, keep the data volume ---
+if [[ "$UPDATE" -eq 1 ]]; then
+    if [[ -z "$CTID_OVERRIDE" ]]; then
+        CTID=$(pct list | awk '/tallylocal/ {print $1; exit}')
+    fi
+    [[ -z "$CTID" ]] && err "No tallylocal container found. Pass --ctid <id>."
+    info "Updating Tally Local in container ${CTID}..."
+    pct exec "$CTID" -- bash -c '
+        cd /opt/tallylocal || exit 1
+        docker compose pull
+        docker compose up -d
+        docker image prune -f >/dev/null 2>&1 || true
+    ' || err "Update failed. Check: pct exec ${CTID} -- docker compose logs"
+    IP=$(pct exec "$CTID" -- bash -c "hostname -I | awk '{print \$1}'")
+    ok "Tally Local updated (data volume untouched)."
+    info "Access it at: http://${IP}:5000"
+    exit 0
+fi
 
 # --- Check if template exists, download if missing ---
 if ! pveam list local | grep -q "$OS_TEMPLATE"; then
@@ -111,6 +146,8 @@ services:
       - USERS_DB_PATH=/data/users.db
       - USER_DATA_DIR=/data/user_data
       - UPLOADS_DIR=/data/uploads
+      - TALLY_HOST=0.0.0.0
+      - TALLY_ALLOW_REMOTE=1
     volumes:
       - finance_data:/data
     restart: unless-stopped

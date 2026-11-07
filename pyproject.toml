@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tally-local"
+version = "2.0.0"
+description = "Local-first personal finance, exposed as MCP tools, a CLI and an API for any agent"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Bredda", email = "cryptobredda@gmail.com" }]
+keywords = ["personal-finance", "mcp", "agents", "open-banking", "local-first"]
+dependencies = [
+    "Flask>=3.1,<4",
+    "Werkzeug>=3.0",
+    "SQLAlchemy>=2.0,<3",
+    "pdfplumber>=0.11",
+    "pdf2image>=1.16",
+    "Pillow>=10.1",
+    "PyYAML>=6.0",
+    "python-dateutil>=2.8",
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+    "mcp>=2.0,<3",
+    "click>=8.1",
+    "PyJWT[crypto]>=2.8",
+    "cryptography>=42",
+]
+
+[project.optional-dependencies]
+ocr = ["pytesseract>=0.3.10"]
+legacy-ocr = ["paddlepaddle", "paddleocr"]
+dev = ["pytest>=7", "reportlab>=4"]
+
+[project.scripts]
+tally = "app.cli:cli"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.importers" = ["profiles/*.yaml"]
+"app" = ["skills/**/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

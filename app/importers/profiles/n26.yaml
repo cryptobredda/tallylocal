@@ -1,0 +1,14 @@
+id: n26
+name: N26
+match:
+  any: ["n26"]
+dates: ["%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"]
+currency: EUR
+columns:
+  date: ["date", "transaction date", "posted date"]
+  description: ["details", "description", "payee", "narrative", "transaction"]
+  out: []
+  in: []
+  balance: ["balance"]
+  amount: ["amount"]
+skip_rows: ["balance brought forward", "balance carried forward", "opening balance", "closing balance", "sort code", "account number"]

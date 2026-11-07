@@ -139,3 +139,11 @@ coverage.xml
 # - LICENSE              (MIT license)
 # - .gitignore           (this file)
 # ============================================
+# --------------------------------------------
+# Runtime secrets (generated on first run)
+# --------------------------------------------
+.secret_key
+.encryption_key
+*.pem
+instance/
+data/
