@@ -27,6 +27,16 @@ if __name__ == '__main__':
     print("=" * 56)
     print(" Tally Local")
     print(f" http://{host}:{port}")
+    mcp_enabled = os.getenv('TALLY_MCP_HTTP', '0').lower() in ('1', 'true', 'yes')
+    if mcp_enabled:
+        print(f" MCP   http://{host}:{os.getenv('TALLY_MCP_PORT', '8765')}/mcp")
     print("=" * 56)
+
+    if mcp_enabled and not debug_mode:
+        try:
+            from app.mcp_http import start_background
+            start_background()
+        except Exception as exc:  # the UI must still serve if the port is taken
+            print(f"MCP HTTP failed to start: {exc}", file=sys.stderr)
 
     app.run(host=host, port=port, debug=debug_mode)

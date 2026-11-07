@@ -1,111 +1,232 @@
+"""OCR engines for scanned statements.
+
+RapidOCR is the default: PP-OCRv6 detection/recognition models exported to
+ONNX, running on CPU through onnxruntime (~31 MB of models, no PyTorch, no
+PaddlePaddle). Tesseract stays as a fallback, and both are optional: CSV, OFX,
+QIF and MT940 imports never touch this module.
+
+Pin the backend with TALLY_OCR_ENGINE=rapidocr|tesseract|none.
+"""
+from __future__ import annotations
+
 import os
 import re
+import shutil
+import threading
 from datetime import datetime
-from typing import List, Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+
 from PIL import Image
-import io
 
-PADDLEOCR_AVAILABLE = False
 try:
-    from paddleocr import PaddleOCR
-    PADDLEOCR_AVAILABLE = True
-except ImportError:
-    pass
+    from rapidocr import RapidOCR
+    RAPIDOCR_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    RapidOCR = None
+    RAPIDOCR_AVAILABLE = False
 
-PDF_AVAILABLE = False
+try:
+    import pytesseract
+    TESSERACT_AVAILABLE = shutil.which('tesseract') is not None
+except ImportError:  # pragma: no cover - optional dependency
+    pytesseract = None
+    TESSERACT_AVAILABLE = False
+
 try:
     from pdf2image import convert_from_path
     PDF_AVAILABLE = True
-except ImportError:
-    pass
+except ImportError:  # pragma: no cover - optional dependency
+    PDF_AVAILABLE = False
+
+
+def _pkg_version(name: str) -> str:
+    try:
+        from importlib.metadata import version
+        return version(name)
+    except Exception:
+        return ''
 
 
 class OCRService:
+    """One engine per process: loading the models is the expensive part."""
+
     def __init__(self):
+        self.engine: Optional[str] = None      # rapidocr | tesseract | None
         self.ocr = None
         self._initialized = False
-    
+        self._lock = threading.Lock()
+        self.last_error = ''
+
+    # ------------------------------------------------------------- lifecycle
+
+    def _pick_engine(self) -> Optional[str]:
+        forced = (os.getenv('TALLY_OCR_ENGINE') or 'auto').strip().lower()
+        if forced in ('none', 'off', 'disabled'):
+            return None
+        if forced in ('rapidocr', 'tesseract'):
+            return forced
+        if RAPIDOCR_AVAILABLE:
+            return 'rapidocr'
+        if TESSERACT_AVAILABLE:
+            return 'tesseract'
+        return None
+
     def _ensure_initialized(self):
-        """Lazy initialize OCR engine"""
         if self._initialized:
             return
-        if PADDLEOCR_AVAILABLE:
-            try:
-                self.ocr = PaddleOCR(lang='en')
-                self._initialized = True
-            except Exception as e:
-                print(f"Warning: Failed to initialize PaddleOCR: {e}")
-                self.ocr = None
-    
+        with self._lock:
+            if self._initialized:
+                return
+            forced = (os.getenv('TALLY_OCR_ENGINE') or 'auto').strip().lower()
+            choice = self._pick_engine()
+            if choice == 'rapidocr':
+                try:
+                    self.ocr = RapidOCR()
+                    self.engine = 'rapidocr'
+                except Exception as exc:
+                    self.last_error = f'RapidOCR init failed: {exc}'
+                    self.ocr = None
+                    if TESSERACT_AVAILABLE and forced != 'rapidocr':
+                        self.engine = 'tesseract'
+            elif choice == 'tesseract' and TESSERACT_AVAILABLE:
+                self.engine = 'tesseract'
+            self._initialized = True
+
     def reset(self):
-        """Reset OCR engine (call between statement batches if needed)"""
-        self.ocr = None
-        self._initialized = False
-    
+        with self._lock:
+            self.ocr = None
+            self.engine = None
+            self._initialized = False
+            self.last_error = ''
+
     def is_available(self) -> bool:
         self._ensure_initialized()
-        return PADDLEOCR_AVAILABLE and self.ocr is not None
-    
-    def extract_with_positions(self, image_path: str) -> List[Dict]:
-        """Extract text with X,Y positions from image"""
+        return self.engine in ('rapidocr', 'tesseract')
+
+    def engine_name(self) -> str:
+        self._ensure_initialized()
+        if self.engine == 'rapidocr':
+            version = _pkg_version('rapidocr')
+            return f'RapidOCR {version} (PP-OCRv6, ONNX CPU)'.replace('  ', ' ')
+        if self.engine == 'tesseract':
+            try:
+                return f'Tesseract {pytesseract.get_tesseract_version()}'
+            except Exception:
+                return 'Tesseract'
+        return 'unavailable'
+
+    def status(self) -> Dict:
+        available = self.is_available()
+        return {
+            'available': available,
+            'engine': self.engine or 'none',
+            'name': self.engine_name(),
+            'version': _pkg_version('rapidocr') if self.engine == 'rapidocr' else '',
+            'error': self.last_error,
+        }
+
+    # ------------------------------------------------------------- extraction
+
+    def _rapidocr_items(self, image) -> List[Dict]:
+        result = self.ocr(image)
+        if result is None:
+            return []
+        texts = getattr(result, 'txts', None)
+        boxes = getattr(result, 'boxes', None)
+        scores = getattr(result, 'scores', None)
+        if texts is None:
+            return []
+        items: List[Dict] = []
+        for idx, text in enumerate(texts):
+            text = (text or '').strip()
+            if not text:
+                continue
+            try:
+                score = float(scores[idx]) if scores is not None else 1.0
+            except Exception:
+                score = 1.0
+            if score < 0.35:
+                continue
+            if boxes is None or idx >= len(boxes):
+                continue
+            box = boxes[idx]
+            xs = [float(point[0]) for point in box]
+            ys = [float(point[1]) for point in box]
+            top = (min(ys) + max(ys)) / 2
+            items.append({
+                'text': text,
+                'x0': min(xs),
+                'x1': max(xs),
+                'top': top,
+                'x': int(min(xs)),
+                'y': int(top),
+                'conf': score,
+            })
+        return items
+
+    def _tesseract_items(self, image) -> List[Dict]:
+        data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+        items: List[Dict] = []
+        for i, text in enumerate(data['text']):
+            text = (text or '').strip()
+            if not text or float(data['conf'][i] or 0) < 40:
+                continue
+            left, top, width, height = (data['left'][i], data['top'][i],
+                                        data['width'][i], data['height'][i])
+            items.append({
+                'text': text,
+                'x0': left,
+                'x1': left + width,
+                'top': top + height / 2,
+                'x': left,
+                'y': int(top + height / 2),
+                'conf': float(data['conf'][i]) / 100.0,
+            })
+        return items
+
+    def extract_from_image(self, image: Image.Image) -> List[Dict]:
+        """Words with pixel coordinates from a PIL image."""
         self._ensure_initialized()
         if not self.is_available():
-            raise RuntimeError("PaddleOCR is not installed.")
-        
-        result = self.ocr.predict(image_path)
-        items = []
-        
-        if result and len(result) > 0:
-            ocr_result = result[0]
-            rec_texts = ocr_result.get('rec_texts', [])
-            rec_polys = ocr_result.get('rec_polys', [])
-            
-            for text, poly in zip(rec_texts, rec_polys):
-                x = int(poly[0][0])
-                y = int(poly[0][1])
-                items.append({'text': text, 'x': x, 'y': y})
-        
-        return items
-    
+            raise RuntimeError('No OCR engine is installed.')
+        rgb = image.convert('RGB')
+        if self.engine == 'rapidocr':
+            import numpy as np
+            return self._rapidocr_items(np.array(rgb))
+        return self._tesseract_items(rgb)
+
+    def extract_with_positions(self, image_path: str) -> List[Dict]:
+        """Words with X/Y positions from an image file."""
+        self._ensure_initialized()
+        if not self.is_available():
+            raise RuntimeError('No OCR engine is installed.')
+        if self.engine == 'rapidocr':
+            return self._rapidocr_items(image_path)
+        with Image.open(image_path) as image:
+            return self._tesseract_items(image.convert('RGB'))
+
     def process_statement_structured(self, file_path: str) -> List[Dict]:
-        """Process statement and return structured OCR data with positions"""
+        """Every page's words, tagged with a page number."""
         if not PDF_AVAILABLE:
-            raise RuntimeError("PDF processing libraries not installed.")
-        
+            raise RuntimeError('PDF processing libraries not installed.')
         images = convert_from_path(file_path)
-        all_items = []
-        
-        # Skip the last page (terms and conditions)
+        all_items: List[Dict] = []
         pages_to_process = len(images) - 1 if len(images) > 1 else len(images)
-        
         for page_num in range(pages_to_process):
-            image = images[page_num]
-            temp_path = f'/tmp/finance_page_{page_num}.png'
-            image.save(temp_path, 'PNG')
-            
-            items = self.extract_with_positions(temp_path)
-            
-            # Add page number to each item
+            items = self.extract_from_image(images[page_num])
             for item in items:
                 item['page'] = page_num + 1
-            
             all_items.extend(items)
-            os.remove(temp_path)
-        
         return all_items
-    
+
     def process_statement(self, file_path: str) -> str:
-        """Process statement file and return extracted text (legacy method)"""
+        """Extracted text, lines reconstructed from word positions."""
         items = self.process_statement_structured(file_path)
-        
-        # Sort by page, then Y, then X
         items.sort(key=lambda i: (i.get('page', 1), i['y'], i['x']))
-        
-        lines = []
+        lines: List[str] = []
         current_y = -1
-        current_line = []
+        current_line: List[Dict] = []
         y_threshold = 20
-        
         for item in items:
             if current_y == -1 or abs(item['y'] - current_y) <= y_threshold:
                 current_line.append(item)
@@ -114,14 +235,12 @@ class OCRService:
             else:
                 if current_line:
                     current_line.sort(key=lambda x: x['x'])
-                    lines.append(' '.join([i['text'] for i in current_line]))
+                    lines.append(' '.join(i['text'] for i in current_line))
                 current_line = [item]
                 current_y = item['y']
-        
         if current_line:
             current_line.sort(key=lambda x: x['x'])
-            lines.append(' '.join([i['text'] for i in current_line]))
-        
+            lines.append(' '.join(i['text'] for i in current_line))
         return '\n'.join(lines)
 
 

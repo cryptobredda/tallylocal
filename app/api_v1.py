@@ -8,7 +8,8 @@ import os
 import tempfile
 from datetime import datetime
 
-from flask import Blueprint, current_app, g, jsonify, request, session as flask_session
+from flask import (Blueprint, Response, current_app, g, jsonify, request,
+                   session as flask_session)
 from werkzeug.utils import secure_filename
 
 from app.auth_service import (create_agent_token, list_agent_tokens,
@@ -578,6 +579,77 @@ def tokens_revoke(token_id):
     if not revoke_agent_token(token_id, g.current_user.id):
         raise NotFound(f'Token {token_id} not found')
     return jsonify({'id': token_id, 'revoked': True})
+
+
+# ------------------------------------------------------------------ agent setup
+
+def _mcp_port() -> int:
+    try:
+        return int(os.getenv('TALLY_MCP_PORT', '8765'))
+    except ValueError:
+        return 8765
+
+
+def _mcp_enabled() -> bool:
+    return os.getenv('TALLY_MCP_HTTP', '0').lower() in ('1', 'true', 'yes')
+
+
+@api_v1_bp.get('/agent/setup')
+def agent_setup():
+    """Everything the UI needs to connect an agent, computed from this request."""
+    host = (request.host or '').split(':')[0] or '127.0.0.1'
+    scheme = 'https' if request.is_secure or os.getenv('TALLY_HTTPS', '0').lower() in ('1', 'true') else 'http'
+    port = _mcp_port()
+    base = f'{scheme}://{host}:{port}'
+    from app.ocr_service import ocr_service
+    from app.skill import skill_text
+    return jsonify({
+        'mcp': {
+            'enabled': _mcp_enabled(),
+            'transport': 'streamable-http',
+            'auth': 'bearer',
+            'url': f'{base}/mcp',
+            'health': f'{base}/health',
+            'port': port,
+        },
+        'skill': {
+            'name': 'tally',
+            'version': '2.0.0',
+            'url': '/api/v1/agent/skill',
+            'install': {
+                'claude': 'tally skill install --target claude',
+                'hermes': 'tally skill install --target hermes',
+                'cursor': 'tally skill install --target cursor',
+            },
+        },
+        'tokens': [t.to_safe_dict() for t in list_agent_tokens(g.current_user.id)],
+        'ocr': ocr_service.status(),
+        'skill_preview': skill_text()[:400],
+    })
+
+
+@api_v1_bp.get('/agent/skill')
+def agent_skill():
+    """The SKILL.md an agent harness installs or pastes into its prompt."""
+    from app.skill import skill_text
+    return Response(
+        skill_text(), mimetype='text/markdown',
+        headers={'Content-Disposition': 'attachment; filename="SKILL.md"'},
+    )
+
+
+@api_v1_bp.post('/agent/test')
+def agent_test():
+    """Server-side probe of the MCP port, so the browser never needs CORS."""
+    import requests as http
+    url = f'http://127.0.0.1:{_mcp_port()}/health'
+    try:
+        response = http.get(url, timeout=3)
+        payload = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
+        return jsonify({'ok': response.ok, 'status': response.status_code, 'detail': payload})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': str(exc),
+                        'hint': 'Set TALLY_MCP_HTTP=1 and publish port 8765.'})
 
 
 # ------------------------------------------------------------------ openapi

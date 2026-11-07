@@ -139,6 +139,7 @@ services:
     container_name: tallylocal
     ports:
       - \"5000:5000\"
+      - \"8765:8765\"
     environment:
       - FLASK_ENV=production
       - SECRET_KEY=${SECRET_KEY}
@@ -148,6 +149,8 @@ services:
       - UPLOADS_DIR=/data/uploads
       - TALLY_HOST=0.0.0.0
       - TALLY_ALLOW_REMOTE=1
+      - TALLY_MCP_HTTP=1
+      - TALLY_MCP_PORT=8765
     volumes:
       - finance_data:/data
     restart: unless-stopped

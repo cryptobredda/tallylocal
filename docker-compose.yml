@@ -3,7 +3,8 @@ services:
     build: .
     container_name: tallylocal
     ports:
-      - "5000:5000"
+      - "5000:5000"   # web UI + REST API
+      - "8765:8765"   # MCP over streamable HTTP (bearer tokens)
     environment:
       - FLASK_ENV=production
       - DATA_DIR=/data
@@ -12,6 +13,8 @@ services:
       - UPLOADS_DIR=/data/uploads
       - TALLY_HOST=0.0.0.0
       - TALLY_ALLOW_REMOTE=1
+      - TALLY_MCP_HTTP=1
+      - TALLY_MCP_PORT=8765
       - PORT=5000
       # Set SECRET_KEY and TALLY_ENCRYPTION_KEY in .env for stable sessions and
       # decryptable bank connections. Without them, keys are generated into /data.

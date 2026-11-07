@@ -20,6 +20,11 @@ RUN apt-get -o Acquire::ForceIPv4=true update && \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Download the PP-OCRv6 models at build time: the container must work on a
+# homelab with no outbound access, and runtime downloads would land in $HOME.
+RUN python -c "from rapidocr import RapidOCR; RapidOCR()" && \
+    chmod -R a+rX /usr/local/lib/python3.12/site-packages/rapidocr
+
 COPY . .
 
 RUN useradd --create-home appuser && \
@@ -28,10 +33,12 @@ RUN useradd --create-home appuser && \
 
 USER appuser
 
-EXPOSE 5000
+EXPOSE 5000 8765
 ENV FLASK_ENV=production \
     TALLY_HOST=0.0.0.0 \
     TALLY_ALLOW_REMOTE=1 \
+    TALLY_MCP_HTTP=1 \
+    TALLY_MCP_PORT=8765 \
     DATA_DIR=/data \
     PORT=5000
 

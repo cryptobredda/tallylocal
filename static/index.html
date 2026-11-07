@@ -1224,6 +1224,77 @@
                     <p class="text-sm text-gray-500">Manage your data</p>
                 </div>
 
+                <!-- AI agents / MCP -->
+                <div class="card-nb p-4 mb-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-2">
+                            <i class="fas fa-plug text-purple-400 text-sm"></i>
+                            <span class="text-sm font-semibold">AI Agents (MCP)</span>
+                            <span id="mcp-status" class="text-[10px] px-2 py-0.5 rounded bg-surface-50 text-gray-400">checking…</span>
+                        </div>
+                        <a href="/api/v1/agent/skill" class="text-xs text-blue-400"><i class="fas fa-download mr-1"></i>Skill</a>
+                    </div>
+                    <p class="text-xs text-gray-500 mb-3">Connect Claude, Cursor, Hermes or any MCP client over your network. Tokens are scoped and revocable.</p>
+
+                    <div class="p-3 bg-surface-50 rounded-lg mb-3">
+                        <div class="flex flex-col sm:flex-row gap-2">
+                            <div class="flex-1">
+                                <label class="text-[11px] text-gray-500">MCP endpoint</label>
+                                <input id="mcp-url" readonly class="input-nb w-full text-xs" placeholder="http://your-host:8765/mcp">
+                            </div>
+                            <div class="flex gap-2 items-end">
+                                <button onclick="copyText(document.getElementById('mcp-url').value, 'mcp-copy')" class="btn-nb btn-nb-secondary px-3 py-2 text-xs">Copy</button>
+                                <button onclick="testMcp()" class="btn-nb btn-nb-primary px-3 py-2 text-xs">Test</button>
+                            </div>
+                        </div>
+                        <div id="mcp-copy" class="text-[11px] mt-1 text-gray-500"></div>
+                        <div id="mcp-test" class="text-[11px] mt-1 text-gray-500"></div>
+                        <div id="ocr-status" class="text-[11px] mt-1 text-gray-500"></div>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs font-medium">Agent tokens</span>
+                            <button onclick="toggleTokenForm()" class="btn-nb btn-nb-secondary px-2 py-1 text-xs"><i class="fas fa-plus mr-1"></i>New token</button>
+                        </div>
+                        <div id="token-form" class="hidden p-2 bg-surface-50 rounded-lg mb-2">
+                            <div class="flex flex-col sm:flex-row gap-2">
+                                <input id="token-name" class="input-nb flex-1 text-xs" placeholder="claude-laptop">
+                                <label class="text-xs flex items-center gap-1"><input type="checkbox" id="token-write" checked> allow writes</label>
+                                <button onclick="createAgentToken()" class="btn-nb btn-nb-primary px-3 py-1 text-xs">Create</button>
+                            </div>
+                            <div class="text-[11px] text-gray-500 mt-1">Shown once. Read-only tokens get an MCP server without mutating tools.</div>
+                        </div>
+                        <div id="token-reveal" class="hidden p-2 rounded-lg mb-2 bg-yellow-500/10 border border-yellow-500/30">
+                            <div class="text-[11px] text-yellow-300 mb-1">Copy this token now — it will not be shown again.</div>
+                            <div class="flex gap-2">
+                                <code id="token-value" class="text-[11px] break-all flex-1"></code>
+                                <button onclick="copyText(document.getElementById('token-value').textContent, 'token-copy')" class="btn-nb btn-nb-secondary px-2 py-1 text-[11px]">Copy</button>
+                            </div>
+                            <div id="token-copy" class="text-[11px] mt-1"></div>
+                        </div>
+                        <div id="agent-tokens" class="space-y-1"></div>
+                    </div>
+
+                    <div class="p-3 bg-surface-50 rounded-lg">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs font-medium">Client config</span>
+                            <div class="flex gap-1">
+                                <button onclick="setAgentConfigTab('claude')" id="cfg-tab-claude" class="btn-nb btn-nb-secondary px-2 py-1 text-[11px]">Claude</button>
+                                <button onclick="setAgentConfigTab('cursor')" id="cfg-tab-cursor" class="btn-nb btn-nb-secondary px-2 py-1 text-[11px]">Cursor</button>
+                                <button onclick="setAgentConfigTab('hermes')" id="cfg-tab-hermes" class="btn-nb btn-nb-secondary px-2 py-1 text-[11px]">Hermes</button>
+                                <button onclick="copyText(document.getElementById('mcp-config').textContent, 'cfg-copy')" class="btn-nb btn-nb-secondary px-2 py-1 text-[11px]">Copy</button>
+                            </div>
+                        </div>
+                        <pre id="mcp-config" class="text-[11px] leading-relaxed overflow-x-auto whitespace-pre-wrap text-gray-300"></pre>
+                        <div id="cfg-copy" class="text-[11px] mt-1"></div>
+                        <div class="text-[11px] text-gray-500 mt-2">
+                            Install the skill: <code class="text-gray-300">tally skill install --target claude</code> ·
+                            <a class="text-blue-400" href="/api/v1/agent/skill">download SKILL.md</a>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card-nb p-4 mb-4">
                     <div class="flex items-center justify-between mb-4">
                         <span class="text-sm font-semibold">Categories</span>

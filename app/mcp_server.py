@@ -16,8 +16,17 @@ from mcp.server import MCPServer
 
 from app.core import TallyCore, TallyError
 
+# Tools that change data. Tokens without the "write" scope get a server with
+# these removed, so a read-only agent cannot mutate the ledger even if it tries.
+WRITE_TOOLS = (
+    'update_transaction', 'categorize_transactions', 'add_transaction',
+    'delete_transaction', 'undo_transaction', 'set_budget', 'create_goal',
+    'contribute_to_goal', 'create_dashboard', 'import_preview', 'import_commit',
+    'import_revert', 'sync_bank',
+)
 
-def build_server(core: Optional[TallyCore] = None) -> MCPServer:
+
+def build_server(core: Optional[TallyCore] = None, read_only: bool = False) -> MCPServer:
     core = core or TallyCore(actor='agent')
 
     server = MCPServer(
@@ -314,6 +323,10 @@ def build_server(core: Optional[TallyCore] = None) -> MCPServer:
             "category (get_context alerts). Propose a category for each merchant, then apply "
             "with categorize_transactions(learn_rule=true). Never guess wildly: if unsure, ask."
         )
+
+    if read_only:
+        for name in WRITE_TOOLS:
+            server.remove_tool(name)
 
     return server
 

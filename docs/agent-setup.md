@@ -6,7 +6,7 @@ your agent speaks; they all read and write the same database with the same rules
 | Interface | Use it for | Entry point |
 |---|---|---|
 | **MCP (stdio)** | Claude Desktop, Hermes, Cursor, VS Code | `tally mcp` |
-| **MCP (HTTP)** | Remote agents, phone, another machine | `tally mcp --transport streamable-http` |
+| **MCP (HTTP)** | Remote agents, homelab, another machine | `http://<host>:8765/mcp` (Settings → AI Agents) |
 | **CLI** | Codex CLI, shell loops, cron | `tally <command>` |
 | **HTTP API** | Any framework, generated clients | `/api/v1` + `/api/v1/openapi.json` |
 
@@ -95,14 +95,58 @@ Prompts: `monthly_review`, `subscription_audit`, `statement_cleanup`.
 
 ---
 
-## 3. MCP — HTTP (remote)
+## 3. MCP — network (Streamable HTTP)
+
+The Docker image starts this on `8765` automatically (`TALLY_MCP_HTTP=1`).
+Outside Docker:
 
 ```bash
-TALLY_ALLOW_REMOTE=1 tally mcp --transport streamable-http --host 0.0.0.0 --port 8765
+TALLY_ALLOW_REMOTE=1 TALLY_MCP_HTTP=1 \
+  tally mcp --transport streamable-http --host 0.0.0.0 --port 8765
 ```
 
-Put TLS in front (Caddy/nginx) and send the token as `Authorization: Bearer tal_...`.
-The MCP server binds loopback by default; `--host 0.0.0.0` is an explicit choice.
+Every request under `/mcp` needs a token; `/health` does not:
+
+```bash
+curl -s http://127.0.0.1:8765/health
+# {"status":"ok","service":"tally-mcp",...}
+```
+
+Client config — **Settings → AI Agents (MCP)** generates this with your host and
+a fresh token already filled in:
+
+```json
+{
+  "mcpServers": {
+    "tally": {
+      "type": "http",
+      "url": "http://192.168.1.50:8765/mcp",
+      "headers": { "Authorization": "Bearer tal_..." }
+    }
+  }
+}
+```
+
+Hermes (`~/.hermes/config.yaml`):
+
+```yaml
+mcpServers:
+  tally:
+    url: http://192.168.1.50:8765/mcp
+    headers:
+      Authorization: Bearer tal_...
+```
+
+How it behaves:
+
+- The token's owner decides which ledger is served; two users never share one.
+- A token without `write` connects to a server with the mutating tools removed
+  (16 read tools instead of 29).
+- Health is unauthenticated; tools are not.
+- Without `TALLY_MCP_ALLOWED_HOSTS`, DNS-rebinding protection is off and the
+  bearer token is the boundary. Set `TALLY_MCP_ALLOWED_HOSTS=finance.lan,192.168.1.50`
+  to turn it on with an allowlist.
+- Put TLS in front (Caddy/nginx) if the LAN is not trusted — tokens travel in a header.
 
 ---
 

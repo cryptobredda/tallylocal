@@ -29,32 +29,56 @@ except ImportError:  # pragma: no cover
     PDFPLUMBER = False
 
 try:
-    import pytesseract
     from pdf2image import convert_from_path
-    OCR = True
+    PDF_TO_IMAGE = True
 except ImportError:  # pragma: no cover
-    OCR = False
+    PDF_TO_IMAGE = False
 
 MONEY_TOKEN = re.compile(r'^[+-]?[£$€]?\(?[\d.,]+\)?$')
 HEADER_SCAN_LINES = 30
-LINE_TOLERANCE = 3
-LABEL_GAP = 9
+LINE_TOLERANCE = 6
+LABEL_GAP = 18
 
 
 def _money(text: str) -> Optional[float]:
     if not text or text in {'-', '—'}:
         return None
-    if not re.search(r'\d', text):
+    stripped = text.strip()
+    if not re.search(r'\d', stripped):
         return None
-    return parse_amount(text)
+    # A bare "03" or "1234" is a date/description fragment, not an amount.
+    # Require a decimal part or a currency symbol so split OCR words cannot
+    # pollute column clustering.
+    if not re.search(r'[.,]\d{2}$', stripped.strip('()')) and stripped[:1] not in '£$€':
+        return None
+    return parse_amount(stripped)
 
 
 def _group_lines(words: List[dict]) -> List[List[dict]]:
-    buckets: Dict[int, List[dict]] = {}
-    for word in words:
-        bucket = round(word['top'] / LINE_TOLERANCE)
-        buckets.setdefault(bucket, []).append(word)
-    return [sorted(ws, key=lambda w: w['x0']) for _, ws in sorted(buckets.items())]
+    """Cluster words into visual lines by vertical position.
+
+    Fixed buckets (top // 3) split a row when OCR baselines drift by a pixel,
+    which leaves the date on one line and the amount on the next. Cluster
+    against the running mean instead, with a tolerance smaller than row spacing.
+    """
+    if not words:
+        return []
+    ordered = sorted(words, key=lambda w: w['top'])
+    lines: List[List[dict]] = []
+    current: List[dict] = []
+    for word in ordered:
+        if not current:
+            current = [word]
+            continue
+        mean_top = sum(w['top'] for w in current) / len(current)
+        if abs(word['top'] - mean_top) <= LINE_TOLERANCE:
+            current.append(word)
+        else:
+            lines.append(sorted(current, key=lambda w: w['x0']))
+            current = [word]
+    if current:
+        lines.append(sorted(current, key=lambda w: w['x0']))
+    return lines
 
 
 def _merge_labels(header_words: List[dict]) -> List[dict]:
@@ -158,17 +182,43 @@ def _page_words_text(page) -> List[dict]:
     return [{'text': w['text'], 'x0': w['x0'], 'x1': w['x1'], 'top': w['top']} for w in words]
 
 
-def _page_words_ocr(image) -> List[dict]:
-    data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
-    words = []
-    for i, text in enumerate(data['text']):
-        text = (text or '').strip()
-        if not text or float(data['conf'][i] or 0) < 40:
+def _split_words(items: List[dict]) -> List[dict]:
+    """OCR detectors return phrases; the row parser needs one token per word."""
+    words: List[dict] = []
+    for item in items:
+        parts = (item.get('text') or '').split()
+        if len(parts) <= 1:
+            words.append(item)
             continue
-        left, top, width, height = (data['left'][i], data['top'][i],
-                                   data['width'][i], data['height'][i])
-        words.append({'text': text, 'x0': left, 'x1': left + width, 'top': top + height / 2})
+        span = max(1.0, item['x1'] - item['x0'])
+        units = sum(len(part) for part in parts) + (len(parts) - 1)
+        cursor = item['x0']
+        for part in parts:
+            width = span * len(part) / units
+            words.append({**item, 'text': part, 'x0': cursor, 'x1': cursor + width})
+            cursor += width + span / units
     return words
+
+
+def _page_words_ocr(image) -> List[dict]:
+    """OCR one page through the shared engine (RapidOCR, Tesseract fallback)."""
+    from app.ocr_service import ocr_service
+    try:
+        items = ocr_service.extract_from_image(image)
+    except Exception:
+        return []
+    return _split_words(
+        [{'text': item['text'], 'x0': item['x0'], 'x1': item['x1'], 'top': item['top']}
+         for item in items]
+    )
+
+
+def _ocr_ready() -> bool:
+    try:
+        from app.ocr_service import ocr_service
+        return ocr_service.is_available()
+    except Exception:  # pragma: no cover - OCR is optional
+        return False
 
 
 def _extract_pages(path: str, force_ocr: bool = False):
@@ -179,7 +229,7 @@ def _extract_pages(path: str, force_ocr: bool = False):
         for page in pdf.pages:
             words = [] if force_ocr else _page_words_text(page)
             text_len = len(''.join(w['text'] for w in words))
-            if text_len < 20 and OCR:
+            if text_len < 20 and PDF_TO_IMAGE and _ocr_ready():
                 images = convert_from_path(path, dpi=200, first_page=page.page_number,
                                            last_page=page.page_number)
                 if images:

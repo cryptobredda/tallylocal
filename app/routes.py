@@ -302,6 +302,7 @@ def get_status():
     return jsonify({
         'status': 'running',
         'ocr_available': ocr_service.is_available(),
+        'ocr': ocr_service.status(),
         'timestamp': datetime.utcnow().isoformat()
     })
 

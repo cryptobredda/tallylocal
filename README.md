@@ -39,7 +39,7 @@ In a world where every finance app wants to connect to your bank, sell your data
 
 | Feature | Description |
 |---------|-------------|
-| **OCR Statement Import** | Upload PDF or image bank statements and automatically extract transactions using PaddleOCR |
+| **OCR Statement Import** | Upload PDF or image bank statements. Text-layer PDFs need no OCR; scans go through RapidOCR (PP-OCRv6, CPU) |
 | **Multi-Account Support** | Track checking, savings, credit cards, cash, and investment accounts |
 | **Smart Categorization** | Auto-categorize transactions with customizable rules |
 | **Bulk Editing** | Edit multiple transactions at once with powerful batch operations |
@@ -86,7 +86,7 @@ In a world where every finance app wants to connect to your bank, sell your data
 
 ### Prerequisites
 
-- Python 3.8 - 3.12 (required for PaddleOCR compatibility)
+- Python 3.10+ (3.12 recommended)
 - pip (Python package manager)
 
 ### Installation (Local)
@@ -116,16 +116,34 @@ This compose file keeps your data in named Docker volumes so user accounts, uplo
 
 ```bash
 docker build -t finance-ai .
-docker run --rm -p 5000:5000 \
+docker run --rm -p 5000:5000 -p 8765:8765 \
   -e DATA_DIR=/data \
   -e USERS_DB_PATH=/data/users.db \
   -e USER_DATA_DIR=/data/user_data \
   -e UPLOADS_DIR=/data/uploads \
+  -e TALLY_MCP_HTTP=1 \
+  -e TALLY_MCP_PORT=8765 \
   -v finance_data:/data \
   finance-ai
 ```
 
 > **Note:** The first time you run inside Docker you still need to create the initial admin account via the setup screen.
+>
+> Port `5000` is the UI/REST API; port `8765` is MCP over Streamable HTTP.
+
+### Connect an agent over the network
+
+The image runs both services. MCP on `8765` uses the same scoped bearer tokens as
+the REST API, so a homelab agent needs no browser session.
+
+1. Open **Settings → AI Agents (MCP)**.
+2. Create a token — read-only tokens get an MCP server without mutating tools.
+3. Copy the generated config for Claude, Cursor or Hermes. The endpoint is
+   derived from the host you used, e.g. `http://192.168.1.50:8765/mcp`.
+4. Press **Test** to check the port from the server side.
+
+The skill file is downloadable in the same panel, or install it locally with
+`tally skill install --target claude`.
 
 ### Updating a hosted install
 
@@ -155,19 +173,22 @@ start — new columns are added and existing rows are left untouched. If you set
 `TALLY_ENCRYPTION_KEY`, keep it — without it, bank connections cannot be
 decrypted.
 
-### PaddleOCR Setup (optional)
+### OCR Setup
 
 Tally parses PDF statements from their **text layer** with `pdfplumber` — no OCR
-needed for most digital statements, and no extra install. For scanned PDFs, the
-lightweight fallback is Tesseract:
+needed for most digital statements. Scanned statements and photos go through
+**RapidOCR**, which runs PP-OCRv6 detection + recognition models on CPU via
+ONNX Runtime (~31 MB of models, no PyTorch, no PaddlePaddle). It is installed by
+`requirements.txt`, so `pip install -r requirements.txt` is enough.
 
 ```bash
-sudo apt install tesseract-ocr poppler-utils
-pip install pytesseract pdf2image
+# what the Docker image runs, and what you get locally
+python -c "from app.ocr_service import ocr_service; print(ocr_service.status())"
+# {'available': True, 'engine': 'rapidocr', 'name': 'RapidOCR 3.10.0 (PP-OCRv6, ONNX CPU)'}
 ```
 
-PaddleOCR is still supported if you already have it, but it is no longer required
-(it is roughly 600 MB of models and pins Python to ≤3.12). See
+Tesseract remains as a fallback (`apt install tesseract-ocr`); pin the backend
+with `TALLY_OCR_ENGINE=rapidocr|tesseract|none`. See
 [docs/statements.md](docs/statements.md) for how parsing, profiles and confidence
 scoring work.
 
@@ -307,7 +328,7 @@ We're constantly improving Tally Local. Here's what's coming:
 | **Backend** | Python, Flask |
 | **Database** | SQLite with SQLAlchemy |
 | **Frontend** | HTML, Tailwind CSS, DaisyUI, Chart.js |
-| **OCR Engine** | PaddleOCR |
+| **OCR Engine** | RapidOCR (PP-OCRv6, ONNX, CPU) with Tesseract fallback |
 | **Price APIs** | CoinGecko (crypto), Metals.live (precious metals) |
 
 ---

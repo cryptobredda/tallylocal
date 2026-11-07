@@ -9,11 +9,13 @@ Tally reads statements without a bank connection. Four tiers, cheapest first.
 | 0 | QIF | line parser | Older UK/US exports |
 | 0 | MT940 | line parser | European bank standard |
 | 1 | PDF with a text layer | `pdfplumber` | ~most digital statements |
-| 2 | Scanned PDF / image | Tesseract | Optional; `pip install pytesseract` + `tesseract-ocr` |
+| 2 | Scanned PDF / image | RapidOCR (PP-OCRv6) | Ships with `requirements.txt`; Tesseract if installed |
 | 3 | Anything ambiguous | the agent | Review rows in `import_preview`, fix, commit |
 
-PaddleOCR is still supported if installed, but it is no longer required (it is
-~600 MB of models and pins Python ≤3.12).
+OCR is only used when a page has no text layer. The default engine is RapidOCR:
+PP-OCRv6 detection + recognition models exported to ONNX, running on CPU through
+onnxruntime. Models are bundled in the wheel (~31 MB), so the container needs no
+outbound access. `TALLY_OCR_ENGINE` pins `rapidocr`, `tesseract` or `none`.
 
 ---
 
@@ -124,16 +126,17 @@ still can, and are reversible.
 
 ---
 
-## OCR (optional)
+## OCR
 
 ```bash
-sudo apt install tesseract-ocr poppler-utils
-pip install pytesseract pdf2image
+pip install -r requirements.txt     # rapidocr + onnxruntime + pdf2image
+python -c "from app.ocr_service import ocr_service; print(ocr_service.status())"
 ```
 
 Tally uses OCR only when a page has no extractable text, and warns when it does.
-Scanned statements should be reviewed with extra care; the balance check still
-applies.
+RapidOCR runs at ~4 s per A4 page at 200 DPI on a CPU core; Tesseract is used
+automatically if RapidOCR is missing (`apt install tesseract-ocr`). Scanned
+statements should be reviewed with extra care; the balance check still applies.
 
 ---
 

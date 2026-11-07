@@ -647,7 +647,7 @@ function showTab(tabName) {
     if (tabName === 'analytics') loadAnalytics();
     if (tabName === 'budgets') loadBudgets();
     if (tabName === 'upload') loadStatements();
-    if (tabName === 'settings') { loadCategoriesView(); loadRules(); }
+    if (tabName === 'settings') { loadCategoriesView(); loadRules(); loadAgentSettings(); }
     if (tabName === 'assets') loadAssets();
     if (tabName === 'admin') loadAdminDashboard();
 }
@@ -4860,4 +4860,164 @@ function drawPageChart(canvasId, widget) {
         }
     };
     pageCharts[canvasId] = new Chart(canvas, config);
+}
+
+// ---------------------------------------------------------------- agent / MCP
+let agentSetup = null;
+let agentConfigTab = 'claude';
+let newAgentToken = '';
+
+function escapeHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, ch => (
+        {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]
+    ));
+}
+
+async function copyText(value, statusId) {
+    try {
+        await navigator.clipboard.writeText(value);
+    } catch (e) {
+        const area = document.createElement('textarea');
+        area.value = value;
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand('copy');
+        area.remove();
+    }
+    const status = statusId ? document.getElementById(statusId) : null;
+    if (status) {
+        status.textContent = 'Copied';
+        status.className = 'text-[11px] mt-1 text-green-400';
+        setTimeout(() => { status.textContent = ''; }, 1500);
+    }
+}
+
+async function loadAgentSettings() {
+    try {
+        const res = await fetch(`${API}/v1/agent/setup`);
+        if (!res.ok) return;
+        agentSetup = await res.json();
+        document.getElementById('mcp-url').value = agentSetup.mcp.url;
+        const badge = document.getElementById('mcp-status');
+        if (agentSetup.mcp.enabled) {
+            badge.textContent = `MCP :${agentSetup.mcp.port}`;
+            badge.className = 'text-[10px] px-2 py-0.5 rounded bg-green-500/15 text-green-400';
+        } else {
+            badge.textContent = 'MCP disabled';
+            badge.className = 'text-[10px] px-2 py-0.5 rounded bg-yellow-500/15 text-yellow-400';
+        }
+        const ocr = agentSetup.ocr || {};
+        document.getElementById('ocr-status').textContent = ocr.available
+            ? `OCR: ${ocr.name}`
+            : 'OCR unavailable — CSV/OFX/QIF/MT940 and text-layer PDFs still import.';
+        renderAgentTokens(agentSetup.tokens || []);
+        renderAgentConfig();
+    } catch (e) {
+        console.warn('agent setup failed', e);
+    }
+}
+
+function renderAgentTokens(tokens) {
+    const host = document.getElementById('agent-tokens');
+    if (!host) return;
+    if (!tokens.length) {
+        host.innerHTML = '<div class="text-[11px] text-gray-500">No tokens yet. Create one to connect an agent.</div>';
+        return;
+    }
+    host.innerHTML = tokens.map(t => {
+        const scopes = (t.scopes || []).join(', ');
+        const used = t.last_used_at ? `last used ${t.last_used_at.slice(0, 16).replace('T', ' ')}` : 'never used';
+        const revoked = t.revoked_at ? ' · revoked' : '';
+        return `<div class="flex items-center justify-between gap-2 px-2 py-1.5 bg-surface-50 rounded">
+            <div class="min-w-0">
+                <div class="text-xs font-medium truncate">${escapeHtml(t.name)} <span class="text-gray-500 font-normal">${escapeHtml(t.prefix || '')}…</span></div>
+                <div class="text-[11px] text-gray-500">${escapeHtml(scopes)} · ${used}${revoked}</div>
+            </div>
+            ${t.revoked_at ? '' : `<button onclick="revokeAgentToken(${t.id})" class="text-[11px] text-red-400 px-2">Revoke</button>`}
+        </div>`;
+    }).join('');
+}
+
+function toggleTokenForm() {
+    document.getElementById('token-form').classList.toggle('hidden');
+    document.getElementById('token-name').focus();
+}
+
+async function createAgentToken() {
+    const name = (document.getElementById('token-name').value || 'agent').trim();
+    const write = document.getElementById('token-write').checked;
+    const res = await fetch(`${API}/v1/tokens`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, scopes: write ? ['read', 'write'] : ['read']}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        alert((data.error && data.error.message) || 'Could not create token');
+        return;
+    }
+    newAgentToken = data.token;
+    document.getElementById('token-value').textContent = data.token;
+    document.getElementById('token-reveal').classList.remove('hidden');
+    document.getElementById('token-form').classList.add('hidden');
+    document.getElementById('token-name').value = '';
+    renderAgentConfig();
+    loadAgentSettings();
+}
+
+async function revokeAgentToken(id) {
+    if (!confirm('Revoke this token? Agents using it will be disconnected.')) return;
+    await fetch(`${API}/v1/tokens/${id}`, {method: 'DELETE'});
+    loadAgentSettings();
+}
+
+function setAgentConfigTab(tab) {
+    agentConfigTab = tab;
+    renderAgentConfig();
+}
+
+function renderAgentConfig() {
+    const pre = document.getElementById('mcp-config');
+    if (!pre) return;
+    const url = (agentSetup && agentSetup.mcp && agentSetup.mcp.url) || 'http://YOUR-HOST:8765/mcp';
+    const token = newAgentToken || '<PASTE_TOKEN>';
+    if (agentConfigTab === 'hermes') {
+        pre.textContent = `mcpServers:\n  tally:\n    url: ${url}\n    headers:\n      Authorization: Bearer ${token}`;
+    } else {
+        pre.textContent = JSON.stringify({
+            mcpServers: {
+                tally: {
+                    type: 'http',
+                    url,
+                    headers: {Authorization: `Bearer ${token}`},
+                },
+            },
+        }, null, 2);
+    }
+    ['claude', 'cursor', 'hermes'].forEach(tab => {
+        const btn = document.getElementById(`cfg-tab-${tab}`);
+        if (btn) btn.className = tab === agentConfigTab
+            ? 'btn-nb btn-nb-primary px-2 py-1 text-[11px]'
+            : 'btn-nb btn-nb-secondary px-2 py-1 text-[11px]';
+    });
+}
+
+async function testMcp() {
+    const el = document.getElementById('mcp-test');
+    el.textContent = 'Testing…';
+    el.className = 'text-[11px] mt-1 text-gray-500';
+    try {
+        const res = await fetch(`${API}/v1/agent/test`, {method: 'POST'});
+        const data = await res.json();
+        if (data.ok) {
+            el.textContent = `Reachable: ${data.detail.service} v${data.detail.version} (${data.detail.auth})`;
+            el.className = 'text-[11px] mt-1 text-green-400';
+        } else {
+            el.textContent = `Not reachable: ${data.error || data.hint || 'unknown error'}`;
+            el.className = 'text-[11px] mt-1 text-red-400';
+        }
+    } catch (e) {
+        el.textContent = `Not reachable: ${e.message}`;
+        el.className = 'text-[11px] mt-1 text-red-400';
+    }
 }

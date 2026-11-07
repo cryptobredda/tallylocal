@@ -594,11 +594,16 @@ def skill_mcp_config(ctx, actor):
 @click.option('--port', default=8765, type=int)
 @click.pass_context
 def mcp(ctx, transport, host, port):
-    """Run the MCP server (stdio for Claude Desktop/Hermes, http for remote)."""
+    """Run the MCP server (stdio for Claude Desktop/Hermes, HTTP for remote)."""
+    if transport == 'streamable-http':
+        # The HTTP transport is token-authenticated and serves every user of
+        # this instance; it deliberately ignores --db.
+        from app.mcp_http import serve
+        serve(host=host, port=port)
+        return
     core = _core(ctx)
-    os.environ['TALLY_DB_PATH'] = core.db_path
     from app.mcp_server import build_server
-    build_server(core).run(transport, host=host, port=port)
+    build_server(core).run('stdio')
 
 
 @cli.command()
