@@ -55,15 +55,56 @@ if [[ "$UPDATE" -eq 1 ]]; then
     fi
     [[ -z "$CTID" ]] && err "No tallylocal container found. Pass --ctid <id>."
     info "Updating Tally Local in container ${CTID}..."
-    pct exec "$CTID" -- bash -c '
-        cd /opt/tallylocal || exit 1
-        docker compose pull
-        docker compose up -d
-        docker image prune -f >/dev/null 2>&1 || true
-    ' || err "Update failed. Check: pct exec ${CTID} -- docker compose logs"
+    pct exec "$CTID" -- bash -s <<'UPDATE' || err "Update failed. Check: pct exec ${CTID} -- docker compose logs"
+set -e
+cd /opt/tallylocal
+
+# Compose files written before the MCP port existed would recreate the
+# container without :8765. Rewrite the service block deterministically,
+# keeping the existing secrets so sessions and bank links stay valid.
+cp -n docker-compose.yml docker-compose.yml.bak 2>/dev/null || true
+SECRET=$(grep -E '^ *- SECRET_KEY=' docker-compose.yml | head -1 | sed 's/^ *- SECRET_KEY=//' || true)
+ENCRYPTION=$(grep -E '^ *- TALLY_ENCRYPTION_KEY=' docker-compose.yml | head -1 | sed 's/^ *- TALLY_ENCRYPTION_KEY=//' || true)
+cat > docker-compose.yml <<COMPOSE
+services:
+  tallylocal:
+    image: ghcr.io/cryptobredda/tallylocal:latest
+    container_name: tallylocal
+    ports:
+      - "5000:5000"
+      - "8765:8765"
+    environment:
+      - FLASK_ENV=production
+      - SECRET_KEY=${SECRET}
+      - TALLY_ENCRYPTION_KEY=${ENCRYPTION}
+      - DATA_DIR=/data
+      - USERS_DB_PATH=/data/users.db
+      - USER_DATA_DIR=/data/user_data
+      - UPLOADS_DIR=/data/uploads
+      - TALLY_HOST=0.0.0.0
+      - TALLY_ALLOW_REMOTE=1
+      - TALLY_MCP_HTTP=1
+      - TALLY_MCP_PORT=8765
+    volumes:
+      - finance_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  finance_data:
+COMPOSE
+
+docker compose pull
+docker compose up -d
+docker image prune -f >/dev/null 2>&1 || true
+UPDATE
     IP=$(pct exec "$CTID" -- bash -c "hostname -I | awk '{print \$1}'")
     ok "Tally Local updated (data volume untouched)."
-    info "Access it at: http://${IP}:5000"
+    info "Access it at: http://${IP}:5000  ·  MCP at http://${IP}:8765/mcp"
     exit 0
 fi
 

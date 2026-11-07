@@ -173,6 +173,10 @@ start — new columns are added and existing rows are left untouched. If you set
 `TALLY_ENCRYPTION_KEY`, keep it — without it, bank connections cannot be
 decrypted.
 
+`--update` also rewrites `docker-compose.yml` to publish the MCP port and keeps
+the existing `SECRET_KEY` / `TALLY_ENCRYPTION_KEY`; the previous file is saved
+as `docker-compose.yml.bak`.
+
 ### OCR Setup
 
 Tally parses PDF statements from their **text layer** with `pdfplumber` — no OCR
