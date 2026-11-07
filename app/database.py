@@ -102,13 +102,16 @@ def init_db(db_path=None):
     target_path = _resolve_db_path(db_path)
     engine = get_engine(target_path)
     from app import models  # noqa: F401
-    from app.migrate import VIEW_NAME, create_views
+    from app.migrate import VIEW_NAME, ensure_schema, create_views
     # The projection is a VIEW, not a table: exclude it from create_all, then
-    # create it once the base tables exist.
+    # create it once the base tables and their columns exist.
     Base.metadata.create_all(
         engine,
         tables=[t for t in Base.metadata.sorted_tables if t.name != VIEW_NAME],
     )
+    # Legacy installs already have accounts/transactions; create_all() never
+    # adds columns, so bring them up to date before anything queries them.
+    ensure_schema(target_path)
     with engine.begin() as conn:
         create_views(conn)
     print(f"Database initialized at: {target_path}")

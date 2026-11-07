@@ -145,9 +145,6 @@ def ensure_schema(db_path):
     with engine.begin() as conn:
         version = _version(conn)
 
-        # Views first: create_all() skips names that already resolve to a view.
-        create_views(conn)
-
         if _has_table(conn, 'accounts'):
             applied += _add_columns(conn, 'accounts', ACCOUNT_COLUMNS)
         if _has_table(conn, 'transactions'):
@@ -156,6 +153,10 @@ def ensure_schema(db_path):
                 "UPDATE transactions SET source = 'manual' "
                 "WHERE source IS NULL OR source = ''"
             ))
+
+        # Only project after the columns exist: SQLite accepts a view over
+        # missing columns, but every read of it then fails.
+        create_views(conn)
 
         for stmt in INDEXES:
             try:

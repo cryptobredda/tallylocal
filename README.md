@@ -150,8 +150,10 @@ bash -c "$(wget -qLO - https://raw.githubusercontent.com/cryptobredda/tallylocal
 ```
 
 Your accounts, statements and bank connections survive: they live in `/data`
-inside the volume. If you set `TALLY_ENCRYPTION_KEY`, keep it — without it, bank
-connections cannot be decrypted.
+inside the volume. Databases created by 1.x are migrated in place on first
+start — new columns are added and existing rows are left untouched. If you set
+`TALLY_ENCRYPTION_KEY`, keep it — without it, bank connections cannot be
+decrypted.
 
 ### PaddleOCR Setup (optional)
 
